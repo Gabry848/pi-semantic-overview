@@ -5,8 +5,10 @@ A passive, standalone Pi extension that turns free-running main-agent and `@tint
 ## Install
 
 ```sh
-pi install npm:pi-semantic-overview
+pi install git:github.com/Gabry848/pi-semantic-overview
 ```
+
+After a future npm release, `pi install npm:pi-semantic-overview` will also be available.
 
 For local development:
 
