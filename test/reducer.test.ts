@@ -82,9 +82,24 @@ describe("graph reducer", () => {
     expect(graph.nodes).toHaveLength(0);
   });
 
-  it("requires active macro phases to be updated instead of duplicated", () => {
+  it("requires specific titles and one running phase while allowing declared future tasks", () => {
+    expect(() => applyPatch(createGraph("s", 0), { baseVersion: 0, operations: [{
+      op: "addNode", node: { ...node("generic"), type: "implementation", label: "Implementation completed", status: "completed" },
+    }] })).toThrow(/generic node title/);
     const graph = applyPatch(createGraph("s", 0), { baseVersion: 0, operations: [{ op: "addNode", node: node("n1") }] });
     expect(() => applyPatch(graph, { baseVersion: graph.version, operations: [{ op: "addNode", node: { ...node("n2"), type: "implementation" } }] })).toThrow(/update it instead/);
+    const withPlan = applyPatch(graph, { baseVersion: graph.version, operations: [{
+      op: "addNode", node: { ...node("future"), type: "verification", label: "Confirm the workflow outcome", status: "pending" },
+    }] });
+    expect(withPlan.nodes.find((item) => item.id === "future")?.status).toBe("pending");
+    expect(() => applyPatch(withPlan, { baseVersion: withPlan.version, operations: [
+      { op: "updateNode", id: "future", changes: { status: "active", label: "Validating the workflow outcome" } },
+    ] })).toThrow(/complete it before activating/);
+    const activatedPlan = applyPatch(withPlan, { baseVersion: withPlan.version, operations: [
+      { op: "updateNode", id: "n1", changes: { status: "completed", label: "Established the workflow plan" } },
+      { op: "updateNode", id: "future", changes: { status: "active", label: "Validating the workflow outcome" } },
+    ] });
+    expect(activatedPlan.nodes.find((item) => item.id === "future")?.status).toBe("active");
     const transitioned = applyPatch(graph, { baseVersion: graph.version, operations: [
       { op: "updateNode", id: "n1", changes: { status: "completed", detail: "Planning outcome established" } },
       { op: "addNode", node: node("n2") },

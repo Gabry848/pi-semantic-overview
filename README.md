@@ -20,7 +20,7 @@ The package requires Pi 0.84.2 or newer. Subagent support is optional; when `@ti
 
 ## Use
 
-- `/overview` opens a centered, tall 78% × 90% overlay with a primarily vertical workflow.
+- `/overview` opens a centered 94% × 94% overlay with a primarily vertical workflow and a live per-agent TODO panel.
 - `Ctrl+Shift+O` opens the same overlay.
 - `/overview-settings` changes session-level preset, model, thinking level, cadence, or enabled state.
 - `/overview-rules` edits natural-language emphasis rules for the current session.
@@ -40,7 +40,7 @@ Overlay controls:
 
 The deterministic reducer always works, including with the model disabled or unavailable. It maintains stable per-agent fallback phases rather than turning each tool, turn, compaction, or observation cycle into a new block.
 
-Semantic model updates reconcile evidence against the whole graph. Updating or enriching the current macro phase is the default; a new block is reserved for a genuine phase transition, decision, delegation, blocker, revision, integration, or handoff. The executive focus view provides richer purpose, state, relationships, and outcome context without exposing micro steps or raw activity.
+Semantic model updates reconcile evidence against the whole graph. Updating or enriching the current macro phase is the default; a new block is reserved for a genuine phase transition, decision, delegation, blocker, revision, integration, handoff, or an explicitly committed future macro task. The model writes action-specific titles for every semantic block rather than using generic type/status headings. The top-right TODO panel derives completed, current, blocked, and planned work from those agent-owned phases, while the executive focus view provides richer purpose, state, relationships, and outcome context without exposing micro steps or raw activity.
 
 ## Configuration
 
@@ -99,9 +99,9 @@ The graph is non-destructive at the semantic level: model patches normally enric
 - This is a macro observer, not a workflow engine or task manager.
 - Tool classification is heuristic and intentionally does not inspect arguments.
 - No chain-of-thought access is claimed or attempted; only ordinary lifecycle telemetry and bounded visible content excerpts are used.
-- Semantic labels may be coarse, especially in deterministic mode.
+- Before the semantic model completes an update, deterministic fallback labels may briefly remain coarse; model-off mode cannot author action-specific titles or infer committed future tasks.
 - Provider availability, authentication, or malformed model JSON causes a safe fallback to deterministic mode.
-- The overlay is designed for terminals at least 64 columns wide.
+- The overlay remains usable in narrow terminals, but the side-by-side TODO panel requires roughly 76 terminal columns; below that width the vertical graph takes priority.
 - Privacy detection is conservative and may replace benign text with a restricted label.
 - Subagent event coverage depends on the installed `@tintinweb/pi-subagents` version and its telemetry policy.
 

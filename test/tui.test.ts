@@ -21,11 +21,13 @@ function fixture() {
     { id: "n2", type: "implementation", label: "Implement the chosen semantic approach", detail: "The active phase evolves in place while preserving the wider workflow.", agentId: "main", status: "active", startedAt: 11, impact: "high", revision: 2 },
     { id: "n3", type: "blocker", label: "See /private/RAW_SENTINEL.ts", agentId: "main", status: "blocked", startedAt: 12, blocker: "token=RAW_SENTINEL", revision: 0 },
     { id: "n4", type: "delegation", label: "Validate the outcome independently", detail: "A specialist evaluates the macro result before integration.", agentId: "sub", status: "active", startedAt: 13, revision: 0 },
+    { id: "n5", type: "verification", label: "Assess final outcome", agentId: "main", status: "pending", startedAt: 14, revision: 0 },
   );
   graph.edges.push(
     { id: "e1", from: "n1", to: "n2", kind: "sequence" },
     { id: "e2", from: "n2", to: "n3", kind: "blocks" },
     { id: "e3", from: "n2", to: "n4", kind: "delegates" },
+    { id: "e4", from: "n2", to: "n5", kind: "sequence" },
   );
   return graph;
 }
@@ -46,7 +48,10 @@ describe("overview TUI", () => {
       expect(lines.join("\n")).not.toContain("RAW_SENTINEL");
       if (width === 91) {
         expect(lines.join("\n")).toContain("▼");
-        expect(lines.join("\n")).toContain("IMPLEMENTATION  ACTIVE");
+        expect(lines.join("\n")).toContain("Plan the stable macro workflow");
+        expect(lines.join("\n")).toContain("TODO · Main agent");
+        expect(lines.join("\n")).toContain("Assess final outcome");
+        expect(lines.join("\n")).not.toContain("IMPLEMENTATION  ACTIVE");
         expect(lines.join("\n")).toContain("┌");
       }
     }

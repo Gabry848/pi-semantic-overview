@@ -9,7 +9,8 @@ export type OverviewView = "graph" | "agents" | "blockers";
 interface Point { x: number; y: number }
 interface VerticalLayout { lines: string[]; anchors: Map<string, Point> }
 
-const BODY_HEIGHT = 28;
+const BODY_HEIGHT = 34;
+const TODO_MIN_DASHBOARD_WIDTH = 68;
 
 export interface OverviewComponentOptions {
   store: GraphStore;
@@ -115,7 +116,7 @@ export class OverviewComponent implements Component {
         for (const line of visibleBody) lines.push(row(line));
         for (let index = visibleBody.length; index < BODY_HEIGHT; index++) lines.push(row(""));
       } else {
-        this.lastLayout = this.renderVerticalGraph(inner, this.view === "blockers");
+        this.lastLayout = this.renderGraphDashboard(inner, this.view === "blockers");
         const visibleBody = this.lastLayout.lines.slice(this.panY, this.panY + BODY_HEIGHT);
         if (!visibleBody.length) visibleBody.push(` ${theme.fg("muted", "No macro activity yet")}`);
         for (const line of visibleBody) lines.push(row(line));
@@ -133,6 +134,68 @@ export class OverviewComponent implements Component {
   get currentView(): OverviewView { return this.view; }
   get pan(): Point { return { x: this.panX, y: this.panY }; }
   get isFocused(): boolean { return this.focusedId !== undefined; }
+
+  private renderGraphDashboard(width: number, blockersOnly: boolean): VerticalLayout {
+    if (blockersOnly || width < TODO_MIN_DASHBOARD_WIDTH) return this.renderVerticalGraph(width, blockersOnly);
+    const todoWidth = Math.max(26, Math.min(36, Math.floor(width * 0.3)));
+    const gap = 2;
+    const graphWidth = Math.max(38, width - todoWidth - gap);
+    const graph = this.renderVerticalGraph(graphWidth, false);
+    const todo = this.renderTodoPanel(todoWidth);
+    const height = Math.max(graph.lines.length, todo.length);
+    const lines: string[] = [];
+    for (let index = 0; index < height; index++) {
+      const left = graph.lines[index] ?? "";
+      const right = todo[index] ?? "";
+      lines.push(`${padVisible(left, graphWidth)}${" ".repeat(gap)}${right}`);
+    }
+    return { lines, anchors: graph.anchors };
+  }
+
+  private renderTodoPanel(width: number): string[] {
+    const theme = this.options.theme;
+    const inner = Math.max(12, width - 2);
+    const selected = this.graph.nodes.find((node) => node.id === this.selectedId);
+    const running = this.graph.agents.find((agent) => agent.status === "running");
+    const agentId = selected?.agentId ?? running?.id ?? this.graph.agents[this.selectedAgent]?.id ?? "main";
+    const owner = agentLabel(this.graph, agentId);
+    const owned = this.graph.nodes
+      .filter((node) => node.agentId === agentId && node.type !== "goal")
+      .sort((a, b) => a.startedAt - b.startedAt);
+    const tasks = owned.filter((node) => node.type !== "blocker" && node.status !== "cancelled" && node.status !== "failed");
+    const done = tasks.filter((node) => node.status === "completed");
+    const current = tasks.filter((node) => node.status === "active");
+    const planned = tasks.filter((node) => node.status === "pending");
+    const issues = owned.filter((node) => node.type === "blocker" || node.status === "blocked" || node.status === "failed");
+    const lines: string[] = [];
+    const box = (content = "") => `│${pad(content, inner)}│`;
+    lines.push(theme.fg("border", `┌${"─".repeat(inner)}┐`));
+    lines.push(theme.fg("accent", box(` TODO · ${owner}`)));
+    lines.push(theme.fg("dim", box(` ${done.length}/${Math.max(tasks.length, done.length)} macro tasks done`)));
+    lines.push(theme.fg("border", `├${"─".repeat(inner)}┤`));
+    const addTasks = (title: string, marker: string, nodes: GraphNode[], tone: "success" | "accent" | "warning" | "muted") => {
+      if (!nodes.length) return;
+      lines.push(theme.fg("dim", box(` ${title}`)));
+      for (const node of nodes.slice(-3)) {
+        const wrapped = wrapText(node.label, Math.max(8, inner - 4)).slice(0, 2);
+        wrapped.forEach((text, index) => lines.push(theme.fg(tone, box(` ${index === 0 ? marker : " "} ${text}`))));
+      }
+      lines.push(box());
+    };
+    addTasks("DONE", "✓", done, "success");
+    addTasks("NOW", "▶", current, "accent");
+    addTasks("ISSUES", "!", issues, "warning");
+    addTasks("NEXT", "○", planned, "muted");
+    if (!tasks.length && !issues.length) {
+      lines.push(theme.fg("muted", box(" Awaiting semantic plan")));
+      lines.push(box());
+    } else if (!planned.length) {
+      lines.push(theme.fg("muted", box(" NEXT · not declared yet")));
+      lines.push(box());
+    }
+    lines.push(theme.fg("border", `└${"─".repeat(inner)}┘`));
+    return lines;
+  }
 
   private renderVerticalGraph(width: number, blockersOnly: boolean): VerticalLayout {
     const nodes = this.nodesForView(blockersOnly ? "blockers" : "graph");
@@ -170,17 +233,16 @@ export class OverviewComponent implements Component {
     const chars = cardChars(node, selected);
     const raw: string[] = [];
     raw.push(chars.tl + chars.h.repeat(inner) + chars.tr);
-    raw.push(chars.v + pad(`${node.type.toUpperCase()}  ${node.status.toUpperCase()}`, inner) + chars.v);
-    raw.push(chars.v + " ".repeat(inner) + chars.v);
     const labelLines = wrapText(node.label, inner - 2).slice(0, 2);
-    for (const line of labelLines.length ? labelLines : ["Activity"]) raw.push(chars.v + pad(` ${line}`, inner) + chars.v);
-    if (node.detail) {
-      raw.push(chars.v + " ".repeat(inner) + chars.v);
-      for (const line of wrapText(node.detail, inner - 2).slice(0, 2)) raw.push(chars.v + pad(` ${line}`, inner) + chars.v);
-    }
+    for (const line of labelLines.length ? labelLines : ["Semantic activity"]) raw.push(chars.v + pad(` ${line}`, inner) + chars.v);
     raw.push(chars.v + " ".repeat(inner) + chars.v);
+    if (node.detail) {
+      for (const line of wrapText(node.detail, inner - 2).slice(0, 2)) raw.push(chars.v + pad(` ${line}`, inner) + chars.v);
+      raw.push(chars.v + " ".repeat(inner) + chars.v);
+    }
     const owner = agentLabel(this.graph, node.agentId);
-    raw.push(chars.v + pad(` ${owner} · impact ${node.impact ?? "medium"}`, inner) + chars.v);
+    raw.push(chars.v + pad(` ${node.type} · ${node.status} · ${owner}`, inner) + chars.v);
+    raw.push(chars.v + pad(` impact ${node.impact ?? "medium"}`, inner) + chars.v);
     raw.push(chars.bl + chars.h.repeat(inner) + chars.br);
     return raw.map((line) => `${" ".repeat(indent)}${this.paintCard(line, node, selected)}`);
   }
@@ -203,9 +265,9 @@ export class OverviewComponent implements Component {
       for (const line of wrapText(text, Math.max(8, contentWidth - visibleWidth(prefix)))) add(prefix + line);
     };
 
-    add(theme.fg("accent", theme.bold(`● ${node.type.toUpperCase()} — ${node.status.toUpperCase()}`)));
+    add(theme.fg("accent", theme.bold(`● ${node.label}`)));
     add(theme.fg("dim", "│"));
-    wrapped(node.label, "│  ");
+    wrapped(`${node.type.toUpperCase()} · ${node.status.toUpperCase()}`, "│  ");
     add(theme.fg("dim", "│"));
     add(theme.fg("accent", theme.bold("● EXECUTIVE SUMMARY")));
     add(theme.fg("dim", "│"));
@@ -368,6 +430,10 @@ function pad(text: string, width: number): string {
   return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 }
 function fit(text: string, width: number): string { return truncateToWidth(text, Math.max(1, width), ""); }
+function padVisible(text: string, width: number): string {
+  const clipped = truncateToWidth(text, Math.max(1, width), "");
+  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+}
 function agentLabel(graph: PublicGraph, id: string): string { return graph.agents.find((agent) => agent.id === id)?.label ?? "Agent"; }
 function formatDuration(ms: number | undefined): string {
   if (ms === undefined) return "active";

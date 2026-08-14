@@ -222,9 +222,10 @@ export function wouldCycle(graph: Pick<SemanticGraph, "edges">, from: string, to
 }
 
 export function applyPatch(graph: SemanticGraph, patch: GraphPatch, evidence: readonly EvidenceItem[] = []): SemanticGraph {
-  validatePatch(graph, patch, evidence);
+  const safePatch = stripUnsafeOptionalText(patch, evidence);
+  validatePatch(graph, safePatch, evidence);
   const next = cloneGraph(graph);
-  for (const operation of patch.operations) {
+  for (const operation of safePatch.operations) {
     if (operation.op === "addNode") next.nodes.push({ ...operation.node });
     else if (operation.op === "updateNode") {
       const node = next.nodes.find((item) => item.id === operation.id)!;
@@ -242,6 +243,27 @@ export function applyPatch(graph: SemanticGraph, patch: GraphPatch, evidence: re
   return next;
 }
 
+function stripUnsafeOptionalText(patch: GraphPatch, evidence: readonly EvidenceItem[]): GraphPatch {
+  return {
+    ...patch,
+    operations: patch.operations.map((operation) => {
+      if (operation.op === "addNode") {
+        const node = { ...operation.node };
+        if (node.detail && inspectPublicText(node.detail, evidence).length) delete node.detail;
+        if (node.blocker && inspectPublicText(node.blocker, evidence).length) delete node.blocker;
+        return { ...operation, node };
+      }
+      if (operation.op === "updateNode") {
+        const changes = { ...operation.changes };
+        if (changes.detail && inspectPublicText(changes.detail, evidence).length) delete changes.detail;
+        if (changes.blocker && inspectPublicText(changes.blocker, evidence).length) delete changes.blocker;
+        return { ...operation, changes };
+      }
+      return operation;
+    }),
+  };
+}
+
 export function validatePatch(graph: SemanticGraph, patch: GraphPatch, evidence: readonly EvidenceItem[] = []): void {
   if (!Number.isInteger(patch.baseVersion) || patch.baseVersion !== graph.version) throw new Error("Stale patch");
   if (!Array.isArray(patch.operations) || patch.operations.length > 24) throw new Error("Invalid operation count");
@@ -253,8 +275,8 @@ export function validatePatch(graph: SemanticGraph, patch: GraphPatch, evidence:
     if (operation.op === "addNode") {
       validateNode(operation.node, evidence);
       if (nodeIds.has(operation.node.id)) throw new Error("Duplicate node");
-      const duplicatePhase = isExclusivePhase(operation.node.type) && [...scratchNodes.values()].some((node) =>
-        node.agentId === operation.node.agentId && isExclusivePhase(node.type) && !isTerminal(node.status),
+      const duplicatePhase = isExclusivePhase(operation.node.type) && isRunningPhase(operation.node.status) && [...scratchNodes.values()].some((node) =>
+        node.agentId === operation.node.agentId && isExclusivePhase(node.type) && isRunningPhase(node.status),
       );
       if (duplicatePhase) throw new Error("Active macro phase already exists; update it instead");
       nodeIds.add(operation.node.id);
@@ -262,10 +284,21 @@ export function validatePatch(graph: SemanticGraph, patch: GraphPatch, evidence:
     } else if (operation.op === "updateNode") {
       const scratch = scratchNodes.get(operation.id);
       if (!scratch) throw new Error("Missing node");
-      for (const text of [operation.changes.label, operation.changes.detail, operation.changes.blocker]) if (text && inspectPublicText(text, evidence).length) throw new Error("Unsafe patch text");
+      for (const [field, text] of [["label", operation.changes.label], ["detail", operation.changes.detail], ["blocker", operation.changes.blocker]] as const) {
+        if (text && inspectPublicText(text, evidence).length) throw new Error(`Unsafe patch ${field}`);
+      }
       if (operation.changes.type && !NODE_TYPES.includes(operation.changes.type)) throw new Error("Invalid type");
       if (operation.changes.status && (!NODE_STATUSES.includes(operation.changes.status) || !isLegalTransition(scratch.status, operation.changes.status))) throw new Error("Invalid status");
       if (operation.changes.impact && !["low", "medium", "high"].includes(operation.changes.impact)) throw new Error("Invalid impact");
+      if (operation.changes.startedAt !== undefined && !Number.isFinite(operation.changes.startedAt)) throw new Error("Invalid startedAt");
+      if (operation.changes.endedAt !== undefined && !Number.isFinite(operation.changes.endedAt)) throw new Error("Invalid endedAt");
+      if (operation.changes.durationMs !== undefined && (!Number.isFinite(operation.changes.durationMs) || operation.changes.durationMs < 0)) throw new Error("Invalid durationMs");
+      if (isGenericTitle(scratch.label) && (!operation.changes.label || isGenericTitle(operation.changes.label))) throw new Error("Action-specific title required");
+      const projected = { ...scratch, ...operation.changes };
+      const duplicateRunningPhase = isExclusivePhase(projected.type) && isRunningPhase(projected.status) && [...scratchNodes.values()].some((node) =>
+        node.id !== projected.id && node.agentId === projected.agentId && isExclusivePhase(node.type) && isRunningPhase(node.status),
+      );
+      if (duplicateRunningPhase) throw new Error("Active macro phase already exists; complete it before activating planned work");
       Object.assign(scratch, operation.changes);
     } else if (operation.op === "addEdge") {
       const edge = operation.edge;
@@ -282,13 +315,29 @@ function validateNode(node: GraphNode, evidence: readonly EvidenceItem[]): void 
   if (!/^[-:a-zA-Z0-9]{1,100}$/.test(node.id) || !/^[-:a-zA-Z0-9]{1,100}$/.test(node.agentId) || !NODE_TYPES.includes(node.type) || !NODE_STATUSES.includes(node.status)) throw new Error("Invalid node");
   if (typeof node.label !== "string" || !Number.isFinite(node.startedAt) || !Number.isInteger(node.revision) || (node.endedAt !== undefined && !Number.isFinite(node.endedAt)) || (node.durationMs !== undefined && !Number.isFinite(node.durationMs))) throw new Error("Invalid node fields");
   if (node.impact !== undefined && !["low", "medium", "high"].includes(node.impact)) throw new Error("Invalid node impact");
-  if (node.label.length > 120 || (node.detail?.length ?? 0) > 400 || inspectPublicText(node.label, evidence).length) throw new Error("Unsafe node");
+  if (node.label.length > 120 || (node.detail?.length ?? 0) > 400 || inspectPublicText(node.label, evidence).length || isGenericTitle(node.label)) throw new Error("Unsafe or generic node title");
   if (node.detail && inspectPublicText(node.detail, evidence).length) throw new Error("Unsafe detail");
   if (node.blocker && inspectPublicText(node.blocker, evidence).length) throw new Error("Unsafe blocker");
 }
 
+function isGenericTitle(label: string): boolean {
+  const normalized = label.trim().toLowerCase().replace(/\s+/g, " ");
+  const placeholders = new Set([
+    "active objective", "reviewing progress", "decision point", "planning next steps", "delegating work",
+    "delegated work", "investigating context", "implementing changes", "verifying outcome", "integrating results",
+    "progress blocked", "execution progress blocked", "agent progress blocked", "delegated work blocked",
+    "revising approach", "preparing handoff", "subagent handoff",
+  ]);
+  if (placeholders.has(normalized)) return true;
+  return /^(goal|reflection|decision|planning|delegation|investigation|implementation|verification|integration|blocker|revision|handoff)( pending| active| completed| blocked| failed| cancelled)?$/.test(normalized);
+}
+
 function isExclusivePhase(type: NodeType): boolean {
   return type !== "goal" && type !== "blocker" && type !== "delegation" && type !== "handoff";
+}
+
+function isRunningPhase(status: NodeStatus): boolean {
+  return status === "active" || status === "blocked";
 }
 
 function isTerminal(status: NodeStatus): boolean {
