@@ -1,0 +1,53 @@
+{
+  "name": "pi-semantic-overview",
+  "version": "0.1.0",
+  "description": "Live semantic workflow overview for free-running Pi agents and subagents",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "observability",
+    "agents",
+    "tui"
+  ],
+  "author": "Gabry848",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gabry848/pi-semantic-overview.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Gabry848/pi-semantic-overview/issues"
+  },
+  "homepage": "https://github.com/Gabry848/pi-semantic-overview#readme",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.84.2",
+    "@earendil-works/pi-coding-agent": ">=0.84.2",
+    "@earendil-works/pi-tui": ">=0.84.2",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.84.2",
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@earendil-works/pi-tui": "^0.84.2",
+    "@sinclair/typebox": "^0.34.41",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
