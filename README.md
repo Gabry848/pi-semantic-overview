@@ -20,7 +20,7 @@ The package requires Pi 0.84.2 or newer. Subagent support is optional; when `@ti
 
 ## Use
 
-- `/overview` opens a centered 70% overlay.
+- `/overview` opens a centered, tall 78% × 90% overlay with a primarily vertical workflow.
 - `Ctrl+Shift+O` opens the same overlay.
 - `/overview-settings` changes session-level preset, model, thinking level, cadence, or enabled state.
 - `/overview-rules` edits natural-language emphasis rules for the current session.
@@ -29,15 +29,18 @@ The package requires Pi 0.84.2 or newer. Subagent support is optional; when `@ti
 
 Overlay controls:
 
-- Arrow keys: spatial node navigation with automatic panning
-- Ctrl+arrows: manual pan
-- Tab: next agent lane
-- Enter: node details
+- Up/down: follow the vertical macro workflow
+- Left/right: follow incoming or outgoing semantic relationships
+- Ctrl+up/down: manual vertical pan
+- Tab: next agent
+- Enter on any block: open its executive focus view; Enter or Escape returns
 - `g`, `a`, `b`: graph, agents, and blockers views
 - `u`: queue semantic update
 - `q` or Escape: close
 
-The deterministic reducer always works, including with the model disabled or unavailable.
+The deterministic reducer always works, including with the model disabled or unavailable. It maintains stable per-agent fallback phases rather than turning each tool, turn, compaction, or observation cycle into a new block.
+
+Semantic model updates reconcile evidence against the whole graph. Updating or enriching the current macro phase is the default; a new block is reserved for a genuine phase transition, decision, delegation, blocker, revision, integration, or handoff. The executive focus view provides richer purpose, state, relationships, and outcome context without exposing micro steps or raw activity.
 
 ## Configuration
 
@@ -89,7 +92,7 @@ Deterministic event reduction has no model cost. With a model enabled, requests 
 
 ## Persistence and branching
 
-The graph is append-only at the semantic level: model patches may add nodes/edges, update legal statuses, or upsert agents, but cannot delete or destructively rewrite graph state. Stale, malformed, unsafe, cyclic, or illegal patches are rejected. Sanitized snapshots follow Pi session branches and are restored from the current branch after reload or tree navigation.
+The graph is non-destructive at the semantic level: model patches normally enrich and transition existing macro nodes in place, and may append nodes/edges only for genuine new phases. They cannot delete or replace graph state. Duplicate active phases for the same agent and semantic type are rejected in favor of updating the existing node. Stale, malformed, unsafe, cyclic, or illegal patches are rejected. Sanitized snapshots follow Pi session branches and are restored from the current branch after reload or tree navigation.
 
 ## Limitations
 
@@ -109,7 +112,7 @@ npm install
 npm run check
 ```
 
-Tests cover reducer transitions, stale patches, deduplication, cycles, privacy sentinels, classifier/normalizer behavior, scheduler single-flight behavior, persistence, subagent correlation, and TUI width/navigation.
+Tests cover stable macro reconciliation, reducer transitions, stale patches, duplicate active phases, deduplication, cycles, privacy sentinels, classifier/normalizer behavior, scheduler single-flight behavior, persistence, subagent correlation, vertical TUI layout/navigation, and executive focus behavior.
 
 ## License
 

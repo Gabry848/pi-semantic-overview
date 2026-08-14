@@ -4,7 +4,7 @@ import { NODE_STATUSES, NODE_TYPES, type EvidenceItem, type GraphEdge, type Grap
 const LEGAL_TRANSITIONS: Record<NodeStatus, readonly NodeStatus[]> = {
   pending: ["active", "cancelled"],
   active: ["completed", "blocked", "failed", "cancelled"],
-  blocked: ["active", "failed", "cancelled"],
+  blocked: ["active", "completed", "failed", "cancelled"],
   completed: [], failed: [], cancelled: [],
 };
 
@@ -39,72 +39,108 @@ export function reduceEvent(graph: SemanticGraph, event: NormalizedEvent): Seman
     case "agent.started":
       agent.status = "running";
       agent.startedAt ??= event.timestamp;
-      ensureActivityNode(next, event, "goal", "Active objective");
+      ensureStableNode(next, event, "goal", "Active objective", "goal");
       break;
     case "agent.completed":
-      agent.status = event.failed ? "failed" : "completed";
+      agent.status = event.failed ? "failed" : "idle";
       agent.endedAt = event.timestamp;
-      closeActiveNodes(next, event.agentId, event.timestamp, event.failed ? "failed" : "completed");
+      // A Pi agent run is not necessarily a workflow phase boundary. Keep the
+      // semantic phase open across runs so the model can reconcile it in place.
+      if (event.failed) {
+        const phase = latestActiveNode(next, event.agentId);
+        if (phase && isLegalTransition(phase.status, "blocked")) {
+          phase.status = "blocked";
+          phase.blocker = "Agent run did not complete";
+          phase.impact = "high";
+          phase.revision++;
+        }
+        ensureStableNode(next, event, "blocker", "Agent progress blocked", "run-blocker", "blocked");
+      }
       break;
     case "turn.started":
       agent.status = "running";
       break;
-    case "turn.completed":
-      closeTurnNodes(next, event);
+    case "turn.completed": {
+      const phase = latestActiveNode(next, event.agentId);
+      if (phase) {
+        phase.durationMs = Math.max(0, event.timestamp - phase.startedAt);
+        phase.revision++;
+      }
       break;
-    case "tool.started":
-      ensureActivityNode(next, event, event.toolClass ?? "implementation", labelForType(event.toolClass ?? "implementation"));
+    }
+    case "tool.started": {
+      const phaseType = event.toolClass ?? "implementation";
+      const phase = ensureStableNode(next, event, phaseType, labelForType(phaseType), "current");
+      if (phase.status === "blocked") {
+        phase.status = "active";
+        delete phase.blocker;
+        phase.revision++;
+      }
+      if (phase.status === "active" && phase.type !== phaseType) {
+        phase.type = phaseType;
+        phase.label = labelForType(phaseType);
+        phase.revision++;
+      }
+      const blocker = [...next.nodes].reverse().find((node) => node.agentId === event.agentId && node.type === "blocker" && node.status === "blocked");
+      if (blocker && isLegalTransition(blocker.status, "completed")) {
+        blocker.status = "completed";
+        blocker.endedAt = event.timestamp;
+        blocker.durationMs = Math.max(0, event.timestamp - blocker.startedAt);
+        blocker.revision++;
+      }
       break;
+    }
     case "tool.completed": {
-      const node = findCorrelatedNode(next, event);
-      if (node && isLegalTransition(node.status, event.failed ? "failed" : "completed")) {
-        node.status = event.failed ? "failed" : "completed";
-        node.endedAt = event.timestamp;
+      const node = latestActiveNode(next, event.agentId);
+      if (node) {
         node.durationMs = event.durationMs ?? Math.max(0, event.timestamp - node.startedAt);
         node.revision++;
-        if (event.failed) {
+      }
+      if (event.failed) {
+        if (node && isLegalTransition(node.status, "blocked")) {
+          node.status = "blocked";
           node.impact = "high";
-          const blocker = ensureActivityNode(next, event, "blocker", "Tool activity blocked");
-          blocker.status = "blocked";
-          blocker.blocker = "Execution did not complete";
-          addEdge(next, node.id, blocker.id, "blocks");
+          node.blocker = "Execution did not complete";
         }
+        const blocker = ensureStableNode(next, event, "blocker", "Execution progress blocked", "tool-blocker", "blocked");
+        blocker.blocker = "Execution did not complete";
+        if (node) addEdge(next, node.id, blocker.id, "blocks");
       }
       break;
     }
     case "subagent.created":
       agent.status = "idle";
-      ensureActivityNode(next, event, "delegation", "Delegated work");
+      ensureStableNode(next, event, "delegation", "Delegated work", "delegation");
       break;
     case "subagent.started":
       agent.status = "running";
       agent.startedAt ??= event.timestamp;
-      ensureActivityNode(next, event, "delegation", "Delegated work");
+      ensureStableNode(next, event, "delegation", "Delegated work", "delegation");
       activateLatest(next, event.agentId, "delegation");
       break;
     case "subagent.completed":
       agent.status = "completed";
       agent.endedAt = event.timestamp;
       closeActiveNodes(next, event.agentId, event.timestamp, "completed", event.durationMs);
-      ensureActivityNode(next, event, "handoff", "Subagent handoff", "completed");
+      ensureStableNode(next, event, "handoff", "Subagent handoff", "handoff", "completed");
       break;
     case "subagent.failed":
       agent.status = "failed";
       agent.endedAt = event.timestamp;
       closeActiveNodes(next, event.agentId, event.timestamp, "failed", event.durationMs);
-      ensureActivityNode(next, event, "blocker", "Delegated work blocked", "blocked");
+      ensureStableNode(next, event, "blocker", "Delegated work blocked", "delegation-blocker", "blocked");
       break;
+    case "subagent.steered": {
+      const delegation = ensureStableNode(next, event, "delegation", "Delegated work", "delegation");
+      delegation.label = "Delegated work redirected";
+      delegation.revision++;
+      break;
+    }
     case "subagent.compacted":
-      ensureActivityNode(next, event, "reflection", "Subagent context consolidated", "completed");
-      break;
-    case "subagent.steered":
-      ensureActivityNode(next, event, "revision", "Delegation redirected", "completed");
-      break;
     case "session.compacted":
-      ensureActivityNode(next, event, "reflection", "Context consolidated", "completed");
-      break;
     case "session.tree":
-      ensureActivityNode(next, event, "revision", "Session branch changed", "completed");
+      // Compaction and branch telemetry are implementation mechanics, not macro
+      // workflow phases. Evidence can still inform the next reconciliation.
       break;
   }
   return next;
@@ -119,13 +155,16 @@ function upsertEventAgent(graph: SemanticGraph, event: NormalizedEvent) {
   return agent;
 }
 
-function ensureActivityNode(graph: SemanticGraph, event: NormalizedEvent, type: NodeType, label: string, status: NodeStatus = "active"): GraphNode {
-  const correlation = event.correlationId ?? `turn:${event.turn ?? graph.version}`;
-  const key = `${event.agentId}:${type}:${correlation}`;
-  const existing = graph.nodes.find((node) => node.id === `n:${key}`);
-  if (existing) return existing;
+function ensureStableNode(graph: SemanticGraph, event: NormalizedEvent, type: NodeType, label: string, slot: string, status: NodeStatus = "active"): GraphNode {
+  const baseId = `n:${event.agentId}:${slot}`;
+  const candidates = graph.nodes.filter((node) => node.id === baseId || node.id.startsWith(`${baseId}:`));
+  const ongoing = [...candidates].reverse().find((node) => !isTerminal(node.status));
+  if (ongoing) return ongoing;
+  const existing = candidates[0];
+  if (existing && (slot === "goal" || status === "completed")) return existing;
+  const id = existing ? `${baseId}:${candidates.length + 1}` : baseId;
   const node: GraphNode = {
-    id: `n:${key}`,
+    id,
     type, label, agentId: event.agentId, status,
     startedAt: event.timestamp,
     ...(status === "completed" ? { endedAt: event.timestamp, durationMs: event.durationMs ?? 0 } : {}),
@@ -152,19 +191,8 @@ function labelForType(type: NodeType): string {
   return labels[type];
 }
 
-function findCorrelatedNode(graph: SemanticGraph, event: NormalizedEvent): GraphNode | undefined {
-  if (event.correlationId) return [...graph.nodes].reverse().find((node) => node.id.endsWith(`:${event.correlationId}`));
-  return [...graph.nodes].reverse().find((node) => node.agentId === event.agentId && node.status === "active");
-}
-function closeTurnNodes(graph: SemanticGraph, event: NormalizedEvent): void {
-  for (const node of graph.nodes) {
-    if (node.agentId === event.agentId && node.status === "active" && isLegalTransition(node.status, event.failed ? "failed" : "completed")) {
-      node.status = event.failed ? "failed" : "completed";
-      node.endedAt = event.timestamp;
-      node.durationMs = Math.max(0, event.timestamp - node.startedAt);
-      node.revision++;
-    }
-  }
+function latestActiveNode(graph: SemanticGraph, agentId: string): GraphNode | undefined {
+  return [...graph.nodes].reverse().find((node) => node.agentId === agentId && node.status === "active" && node.type !== "goal");
 }
 function closeActiveNodes(graph: SemanticGraph, agentId: string, now: number, status: NodeStatus, duration?: number): void {
   for (const node of graph.nodes) if (node.agentId === agentId && node.status === "active" && isLegalTransition(node.status, status)) {
@@ -218,18 +246,27 @@ export function validatePatch(graph: SemanticGraph, patch: GraphPatch, evidence:
   if (!Number.isInteger(patch.baseVersion) || patch.baseVersion !== graph.version) throw new Error("Stale patch");
   if (!Array.isArray(patch.operations) || patch.operations.length > 24) throw new Error("Invalid operation count");
   const nodeIds = new Set(graph.nodes.map((node) => node.id));
+  const scratchNodes = new Map(graph.nodes.map((node) => [node.id, { ...node }]));
   const edgeIds = new Set(graph.edges.map((edge) => edge.id));
   const scratchEdges = graph.edges.map((edge) => ({ ...edge }));
   for (const operation of patch.operations) {
     if (operation.op === "addNode") {
       validateNode(operation.node, evidence);
       if (nodeIds.has(operation.node.id)) throw new Error("Duplicate node");
+      const duplicatePhase = isExclusivePhase(operation.node.type) && [...scratchNodes.values()].some((node) =>
+        node.agentId === operation.node.agentId && isExclusivePhase(node.type) && !isTerminal(node.status),
+      );
+      if (duplicatePhase) throw new Error("Active macro phase already exists; update it instead");
       nodeIds.add(operation.node.id);
+      scratchNodes.set(operation.node.id, { ...operation.node });
     } else if (operation.op === "updateNode") {
-      if (!nodeIds.has(operation.id)) throw new Error("Missing node");
+      const scratch = scratchNodes.get(operation.id);
+      if (!scratch) throw new Error("Missing node");
       for (const text of [operation.changes.label, operation.changes.detail, operation.changes.blocker]) if (text && inspectPublicText(text, evidence).length) throw new Error("Unsafe patch text");
-      if (operation.changes.status && !NODE_STATUSES.includes(operation.changes.status)) throw new Error("Invalid status");
+      if (operation.changes.type && !NODE_TYPES.includes(operation.changes.type)) throw new Error("Invalid type");
+      if (operation.changes.status && (!NODE_STATUSES.includes(operation.changes.status) || !isLegalTransition(scratch.status, operation.changes.status))) throw new Error("Invalid status");
       if (operation.changes.impact && !["low", "medium", "high"].includes(operation.changes.impact)) throw new Error("Invalid impact");
+      Object.assign(scratch, operation.changes);
     } else if (operation.op === "addEdge") {
       const edge = operation.edge;
       if (edgeIds.has(edge.id) || !nodeIds.has(edge.from) || !nodeIds.has(edge.to) || edge.from === edge.to || !["sequence", "depends-on", "delegates", "revises", "integrates", "blocks"].includes(edge.kind)) throw new Error("Invalid edge");
@@ -248,6 +285,14 @@ function validateNode(node: GraphNode, evidence: readonly EvidenceItem[]): void 
   if (node.label.length > 120 || (node.detail?.length ?? 0) > 400 || inspectPublicText(node.label, evidence).length) throw new Error("Unsafe node");
   if (node.detail && inspectPublicText(node.detail, evidence).length) throw new Error("Unsafe detail");
   if (node.blocker && inspectPublicText(node.blocker, evidence).length) throw new Error("Unsafe blocker");
+}
+
+function isExclusivePhase(type: NodeType): boolean {
+  return type !== "goal" && type !== "blocker" && type !== "delegation" && type !== "handoff";
+}
+
+function isTerminal(status: NodeStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function cloneGraph(graph: SemanticGraph): SemanticGraph {

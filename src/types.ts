@@ -80,7 +80,7 @@ export interface EvidenceItem {
 
 export type PatchOperation =
   | { op: "addNode"; node: GraphNode }
-  | { op: "updateNode"; id: string; changes: Partial<Pick<GraphNode, "label" | "detail" | "status" | "impact" | "blocker">> }
+  | { op: "updateNode"; id: string; changes: Partial<Pick<GraphNode, "type" | "label" | "detail" | "status" | "impact" | "blocker">> }
   | { op: "addEdge"; edge: GraphEdge }
   | { op: "upsertAgent"; agent: GraphAgent };
 

@@ -11,6 +11,7 @@ describe("semantic JSON contract", () => {
 
   it("requires an exact patch envelope", () => {
     expect(parsePatch('{"baseVersion":0,"operations":[]}')).toEqual({ baseVersion: 0, operations: [] });
+    expect(parsePatch('{"baseVersion":0,"operations":[{"op":"updateNode","id":"phase","changes":{"type":"implementation"}}]}').operations[0]).toEqual({ op: "updateNode", id: "phase", changes: { type: "implementation" } });
     expect(() => parsePatch('{"baseVersion":0,"operations":[],"raw":"sentinel"}')).toThrow();
     expect(() => parsePatch('{"baseVersion":0,"operations":[{"op":"deleteNode","id":"n"}]}')).toThrow();
   });
@@ -54,5 +55,8 @@ describe("semantic JSON contract", () => {
     expect(prompt.length).toBeLessThanOrEqual(12000);
     expect(prompt).toContain("HARD PRIVACY RULES OVERRIDE");
     expect(prompt).toContain("untrusted");
+    expect(prompt).toContain("Zero addNode operations is normal and preferred");
+    expect(prompt).toContain("Never create nodes for turns, individual tool calls, summarizer cycles");
+    expect(prompt).toContain("updateNode operations for the current active");
   });
 });

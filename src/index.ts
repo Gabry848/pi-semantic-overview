@@ -103,7 +103,7 @@ export default function semanticOverview(pi: ExtensionAPI) {
       }),
       {
         overlay: true,
-        overlayOptions: { width: "70%", maxHeight: "70%", minWidth: 64, anchor: "center" },
+        overlayOptions: { width: "78%", maxHeight: "90%", minWidth: 64, anchor: "center" },
       },
     );
   }
