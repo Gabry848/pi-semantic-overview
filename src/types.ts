@@ -8,26 +8,44 @@ export const NODE_STATUSES = ["pending", "active", "completed", "blocked", "fail
 export type NodeStatus = (typeof NODE_STATUSES)[number];
 export type AgentStatus = "idle" | "running" | "completed" | "failed";
 
+export interface MacroStep {
+  action: string;
+  result?: string;
+}
+
 export interface GraphNode {
   id: string;
   type: NodeType;
-  label: string;
-  detail?: string;
+  title: string;
   agentId: string;
   status: NodeStatus;
   startedAt: number;
   endedAt?: number;
-  durationMs?: number;
   impact?: "low" | "medium" | "high";
-  blocker?: string;
-  revision: number;
+  objective?: string;
+  mandate?: string;
+  summary?: string[];
+  outcome?: string;
+  rationale?: string;
+  macroSteps?: MacroStep[];
+  evidenceClaims?: string[];
+  currentWork?: string;
+  concern?: string;
+  nextStep?: string;
+  contribution?: string;
+  supersededBy?: string;
 }
+
+export const EDGE_KINDS = ["sequence", "depends-on", "delegates", "revises", "checks", "integrates", "blocks"] as const;
+export type EdgeKind = (typeof EDGE_KINDS)[number];
 
 export interface GraphEdge {
   id: string;
   from: string;
   to: string;
-  kind: "sequence" | "depends-on" | "delegates" | "revises" | "integrates" | "blocks";
+  kind: EdgeKind;
+  strength?: "intermediate" | "final";
+  note?: string;
 }
 
 export interface GraphAgent {
@@ -37,11 +55,13 @@ export interface GraphAgent {
   status: AgentStatus;
   startedAt?: number;
   endedAt?: number;
+  mandate?: string;
 }
 
 export interface SemanticGraph {
-  schemaVersion: 1;
-  version: number;
+  schemaVersion: 2;
+  semanticRevision: number;
+  telemetryRevision: number;
   sessionId: string;
   updatedAt: number;
   nodes: GraphNode[];
@@ -73,24 +93,31 @@ export interface NormalizedEvent {
 
 export interface EvidenceItem {
   id: string;
-  kind: "prompt" | "assistant" | "tool" | "subagent";
+  kind: "prompt" | "assistant" | "tool" | "subagent" | "compaction";
   text: string;
   timestamp: number;
 }
 
+export type NodeChanges = Partial<Omit<GraphNode, "id" | "agentId" | "supersededBy">>;
+
 export type PatchOperation =
   | { op: "addNode"; node: GraphNode }
-  | { op: "updateNode"; id: string; changes: Partial<Pick<GraphNode, "type" | "label" | "detail" | "status" | "impact" | "blocker" | "startedAt" | "endedAt" | "durationMs">> }
+  | { op: "updateNode"; id: string; changes: NodeChanges }
   | { op: "addEdge"; edge: GraphEdge }
-  | { op: "upsertAgent"; agent: GraphAgent };
+  | { op: "upsertAgent"; agent: GraphAgent }
+  | { op: "consolidateNodes"; ids: string[]; node: GraphNode; edges?: GraphEdge[] }
+  | { op: "supersedeNodes"; ids: string[]; by: string }
+  | { op: "checkBranch"; id: string; branchNodeId: string; mainNodeId: string; note?: string }
+  | { op: "integrateBranch"; id: string; branchNodeId: string; mainNodeId: string; note?: string };
 
 export interface GraphPatch {
-  baseVersion: number;
+  baseRevision: number;
   operations: PatchOperation[];
 }
 
 export interface PublicGraph {
-  version: number;
+  schemaVersion: 2;
+  semanticRevision: number;
   updatedAt: number;
   nodes: GraphNode[];
   edges: GraphEdge[];

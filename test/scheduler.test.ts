@@ -33,6 +33,26 @@ describe("single-flight scheduler", () => {
     expect(peak).toBe(1);
   });
 
+  it("invalidates queued branch-bound work while remaining reusable", async () => {
+    const run = vi.fn(async () => {});
+    const scheduler = new SingleFlightScheduler({ everyTurns: 1, run });
+    scheduler.force(); scheduler.invalidate();
+    await flush();
+    expect(run).not.toHaveBeenCalled();
+    scheduler.onKeyEvent(); await flush();
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("runs new-branch work queued while invalidated work is still settling", async () => {
+    let release!: () => void; let calls = 0;
+    const first = new Promise<void>((resolve) => { release = resolve; });
+    const scheduler = new SingleFlightScheduler({ everyTurns: 1, run: async () => { calls++; if (calls === 1) await first; } });
+    scheduler.force(); await flush();
+    scheduler.invalidate(); scheduler.onKeyEvent();
+    release(); await flush(); await flush();
+    expect(calls).toBe(2);
+  });
+
   it("cleans up pending work on dispose", async () => {
     const run = vi.fn(async () => {});
     const scheduler = new SingleFlightScheduler({ everyTurns: 1, run });

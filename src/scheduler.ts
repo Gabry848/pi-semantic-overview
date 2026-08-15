@@ -50,14 +50,22 @@ export class SingleFlightScheduler {
     catch (error) { this.options.onError?.(error); }
     finally {
       this.running = false;
-      if (!this.disposed && generation === this.generation && this.pending) queueMicrotask(() => { void this.drain(generation); });
+      if (!this.disposed && this.pending) {
+        const currentGeneration = this.generation;
+        queueMicrotask(() => { void this.drain(currentGeneration); });
+      }
     }
+  }
+
+  invalidate(): void {
+    this.pending = undefined;
+    this.turns = 0;
+    this.generation++;
   }
 
   dispose(): void {
     this.disposed = true;
-    this.pending = undefined;
-    this.generation++;
+    this.invalidate();
   }
 
   get isRunning(): boolean { return this.running; }

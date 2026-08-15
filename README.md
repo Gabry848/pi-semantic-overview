@@ -1,6 +1,6 @@
 # pi-semantic-overview
 
-A passive, standalone Pi extension that turns free-running main-agent and `@tintinweb/pi-subagents` lifecycle telemetry into a live macro-level semantic graph. It observes work; it does not schedule work, enforce a workflow, expose chain-of-thought, or change agent behavior.
+A passive Pi extension that turns main-agent and optional `@tintinweb/pi-subagents` lifecycle evidence into a compact executive milestone timeline. It observes work; it does not schedule agents, enforce a workflow, expose chain of thought, or turn tool activity into a task list.
 
 ## Install
 
@@ -8,43 +8,107 @@ A passive, standalone Pi extension that turns free-running main-agent and `@tint
 pi install git:github.com/Gabry848/pi-semantic-overview
 ```
 
-After a future npm release, `pi install npm:pi-semantic-overview` will also be available.
-
 For local development:
 
 ```sh
 pi install /absolute/path/to/pi-semantic-overview
 ```
 
-The package requires Pi 0.84.2 or newer. Subagent support is optional; when `@tintinweb/pi-subagents` is present, its public lifecycle event bus is observed.
+Pi 0.84.2 or newer is required. Subagent support is optional and uses that package's public lifecycle event bus.
 
 ## Use
 
-- `/overview` opens a centered 94% × 94% overlay with a primarily vertical workflow and a live per-agent TODO panel.
-- `Ctrl+Shift+O` opens the same overlay.
-- `/overview-settings` changes session-level preset, model, thinking level, cadence, or enabled state.
-- `/overview-rules` edits natural-language emphasis rules for the current session.
-- `/overview-update` queues an immediate semantic update without blocking the main agent.
-- `/overview-status` reports mode and graph size.
+- `/overview` or `Ctrl+Shift+O`: open the centered 94% × 94% overlay.
+- `/overview-update`: queue a semantic synthesis pass.
+- `/overview-rebuild`: prepare a bounded schema-v2 rebuild, show a concrete preview, and ask before replacement.
+- `/overview-settings`: change the session preset, model, thinking level, cadence, or enabled state.
+- `/overview-rules`: edit session-level emphasis preferences.
+- `/overview-status`: show mode and visible milestone count.
 
 Overlay controls:
 
-- Up/down: follow the vertical macro workflow
-- Left/right: follow incoming or outgoing semantic relationships
-- Ctrl+up/down: manual vertical pan
-- Tab: next agent
-- Enter on any block: open its executive focus view; Enter or Escape returns
-- `g`, `a`, `b`: graph, agents, and blockers views
-- `u`: queue semantic update
-- `q` or Escape: close
+- Up/down: move through the executive timeline, including detached branches.
+- Left/right: follow incoming/outgoing semantic relationships.
+- Ctrl+up/down: pan manually.
+- Tab: move between agents.
+- Enter: open variable-length milestone detail; Enter or Escape returns.
+- `g`, `a`, `b`: timeline, agents, and issues views.
+- `u`: queue an update.
+- `q` or Escape: close.
 
-The deterministic reducer always works, including with the model disabled or unavailable. It maintains stable per-agent fallback phases rather than turning each tool, turn, compaction, or observation cycle into a new block.
+## Executive layout
 
-Semantic model updates reconcile evidence against the whole graph. Updating or enriching the current macro phase is the default; a new block is reserved for a genuine phase transition, decision, delegation, blocker, revision, integration, handoff, or an explicitly committed future macro task. The model writes action-specific titles for every semantic block rather than using generic type/status headings. The top-right TODO panel derives completed, current, blocked, and planned work from those agent-owned phases, while the executive focus view provides richer purpose, state, relationships, and outcome context without exposing micro steps or raw activity.
+The primary view is a mostly vertical timeline of 2–12 concrete main milestones when meaningful evidence exists. Milestones use visible circle/junction connectors, multiline titles, and concrete summary cards. An empty clean view is preferred to invented history.
+
+The right board is global and selection-independent:
+
+- **DONE**: completed milestones
+- **NOW**: active milestones
+- **ISSUES**: blockers, blocked work, and failed outcomes
+- **NEXT**: committed pending milestones
+
+The board and timeline are projections of the same semantic graph; there is no separate TODO state.
+
+Subagents render as detached parallel branches. A delegation leaves the main line while that line continues vertically. Explicit intermediate main-agent checks can rejoin the branch more than once, and an explicit final integration uses a stronger connector. Multiple branches are supported. Timing, completion, or vague correlation alone never creates a rejoin.
+
+## Milestone detail
+
+Enter opens meaningful content only, with no fixed section padding, no generic type fallback, and scrolling for long milestones. Detail length follows the available information.
+
+Main milestones may include:
+
+- objective
+- **PASSAGGI SVOLTI**: numbered observable macro actions, each with its concrete result when supported
+- overall result
+- current work, concern, and next step
+
+Subagent milestones may include:
+
+- mandate
+- **PASSAGGI SVOLTI**
+- **CONTROLLI DEL MAIN**, including repeated intermediate checks and final integration
+- contribution to the workflow
+- branch state, concern, and next step
+
+The public detail does not show revision counters, durations, tool metrics, prompts, raw activity, or other technical telemetry.
+
+## Schema v2 and semantic revisions
+
+Schema v2 stores branch-aware snapshots through `pi.appendEntry`. Semantic revisions advance only when a validated semantic patch changes milestones, agents, or relationships. Turns, tools, retries, compactions, and observation events remain telemetry and do not create public milestones or increment semantic revision.
+
+The patch contract supports:
+
+- stable node updates and additions
+- atomic `consolidateNodes` and `supersedeNodes`
+- explicit `checkBranch` and `integrateBranch`
+- ordinary semantic edges and agent upserts
+
+Patches require an exact semantic base revision. Stale model output is rejected rather than blindly rebased. New milestones require a genuine outcome, decision, blocker, delegation, direction change, verification, integration, or handoff. At the 12-main-milestone cap, consolidation must happen before another addition.
+
+Old records are retained as superseded history where practical but do not render. V1 snapshots are read safely: generic/restricted nodes are removed, legacy telemetry revisions are discarded, concrete public history is bounded to at most ten main milestones, and malformed or cyclic data falls back to a clean graph. A successful legacy migration is immediately persisted as v2 so it is not repeated on every restart.
+
+## Rebuild behavior
+
+`/overview-rebuild` reads only bounded compaction/branch summaries and recent visible user/assistant text from the active branch. It excludes tool results, thinking, tool arguments, and custom private state.
+
+When a configured model is available:
+
+1. Pi asks before sending the bounded excerpts.
+2. The model produces a private candidate graph under the same validation and privacy contract.
+3. Pi shows the candidate main-milestone titles.
+4. Pi replaces the current view only after a second confirmation.
+
+When the model is off, unavailable, or returns an invalid candidate, Pi offers to start an empty schema-v2 view rather than inventing history.
+
+## Structured semantic content
+
+Every public node requires a concrete title/action. Optional fields support objective, mandate, summary, outcome, rationale, numbered macro steps, evidence claims, current work, concern, next step, contribution, and subagent checkpoints through branch edges.
+
+Privacy validation is recursive. Unsafe optional strings, list items, results, claims, notes, or macro steps are dropped. An unsafe or generic required title excludes the node from the public projection; it is never replaced by a `Restricted activity` card.
 
 ## Configuration
 
-Configuration is merged in this order: defaults, preset, global file, trusted project file, CLI flags, then session overrides.
+Configuration merges defaults, preset, global file, trusted project file, CLI flags, then session overrides.
 
 - Global: `~/.pi/agent/semantic-overview.json`
 - Trusted project: `.pi/semantic-overview.json`
@@ -62,48 +126,34 @@ Configuration is merged in this order: defaults, preset, global file, trusted pr
 }
 ```
 
-Presets are `executive`, `balanced`, `technical-macro`, `blockers`, and `delegation`.
+Presets: `executive`, `balanced`, `technical-macro`, `blockers`, `delegation`.
 
 Model values:
 
-- `inherit`: use the active Pi model
-- `provider/model`: use a specific configured model
-- `off`: deterministic graph only, with no overview model requests
+- `inherit`: active Pi model
+- `provider/model`: specific configured model
+- `off`: no overview model calls; telemetry remains passive and the public view stays clean until validated semantic data exists
 
-Thinking values are `low`, `medium`, or `high`. CLI flags are `--overview-model`, `--overview-preset`, and `--overview-disabled`.
+CLI flags: `--overview-model`, `--overview-preset`, `--overview-disabled`.
 
-Project configuration is ignored unless Pi considers the project trusted. Invalid values fall back to safe defaults. Natural-language rules affect granularity and emphasis only; they are treated as untrusted preferences and cannot weaken privacy rules.
+Project configuration is ignored unless Pi trusts the project. Natural-language rules are untrusted emphasis preferences and cannot weaken privacy or patch validation.
 
-## Privacy model
+## Privacy and model cost
 
-The extension separates private ephemeral evidence from public graph data.
+Public graph data, snapshots, overlay content, and board content never intentionally contain prompt text, assistant transcripts, tool arguments, tool output, code, paths, filenames, commands, package identifiers, secrets, or chain of thought. Exact six-word copies from currently held sensitive evidence are rejected.
 
-Public graph, overlay, and persisted custom entries never intentionally contain prompt text, assistant text, tool arguments, tool output, commands, paths, code, or raw subagent descriptions/results/errors. Public text is rejected or replaced when it contains code fences/backticks, likely paths or filenames, shell commands, secrets, transcript-like wording, or an exact six-word sequence copied from currently held sensitive evidence. The TUI receives only a public projection.
+The extension may hold a small bounded buffer of visible user/assistant text in memory. Raw tool results, subagent mandates, subagent results, private steering instructions, and child transcripts are not retained in this buffer. With a model enabled, the bounded visible excerpts are sent for semantic synthesis and cleared after a durable exact-revision result (or a valid no-change result). They are never persisted by this package. `inherit` uses Pi's active provider; choosing `provider/model` is an explicit choice to use that configured provider. Set `model` to `off` to prevent all overview model calls.
 
-To improve semantic summaries, the extension may hold a small, bounded set of excerpts in process memory. When a semantic model is enabled, **ephemeral-content sends those bounded excerpts to the configured model provider**. Excerpts are cleared after the request that consumed them and are never written by this package to session persistence. Set `model` to `off` to prevent these model requests.
-
-Snapshots are sanitized and written only through `pi.appendEntry`; they do not enter model context. Restore scans only the current session branch.
-
-`@tintinweb/pi-subagents` controls which child lifecycle events are emitted. Its nested/child telemetry can be limited by that package, so the overview may show only top-level subagents. This package does not read child transcript files or persisted raw subagent records.
-
-## Model cost
-
-Deterministic event reduction has no model cost. With a model enabled, requests happen every `everyTurns` completed turns and after key events such as failures, completion, steering, or compaction. Scheduling is serial and single-flight; bursts are coalesced. Prompts and evidence are bounded, but normal provider input/output charges still apply. Use a larger cadence, `low` thinking, or `model: "off"` to control cost.
-
-## Persistence and branching
-
-The graph is non-destructive at the semantic level: model patches normally enrich and transition existing macro nodes in place, and may append nodes/edges only for genuine new phases. They cannot delete or replace graph state. Duplicate active phases for the same agent and semantic type are rejected in favor of updating the existing node. Stale, malformed, unsafe, cyclic, or illegal patches are rejected. Sanitized snapshots follow Pi session branches and are restored from the current branch after reload or tree navigation.
+Synthesis is serial and single-flight. Periodic requests follow `everyTurns`; key events are coalesced. Branch/tree changes abort and invalidate in-flight synthesis so an old-branch patch cannot land on the new branch. Semantic state is appended before it becomes visible in memory. Prompts are valid JSON-oriented and hard-bounded. Normal provider charges apply.
 
 ## Limitations
 
-- This is a macro observer, not a workflow engine or task manager.
-- Tool classification is heuristic and intentionally does not inspect arguments.
-- No chain-of-thought access is claimed or attempted; only ordinary lifecycle telemetry and bounded visible content excerpts are used.
-- Before the semantic model completes an update, deterministic fallback labels may briefly remain coarse; model-off mode cannot author action-specific titles or infer committed future tasks.
-- Provider availability, authentication, or malformed model JSON causes a safe fallback to deterministic mode.
-- The overlay remains usable in narrow terminals, but the side-by-side TODO panel requires roughly 76 terminal columns; below that width the vertical graph takes priority.
-- Privacy detection is conservative and may replace benign text with a restricted label.
-- Subagent event coverage depends on the installed `@tintinweb/pi-subagents` version and its telemetry policy.
+- This is a semantic observer, not a workflow engine.
+- Model-off mode does not invent milestones from tool names or lifecycle events.
+- Rebuild quality depends on available compaction/recent visible evidence and configured model quality.
+- Conservative privacy checks can omit benign optional text or whole nodes.
+- Narrow terminals prioritize the timeline; the side-by-side global board appears at wider sizes.
+- Subagent visibility depends on lifecycle events emitted by the installed subagent package. The extension does not read child transcript files. Automatic check/integration connectors require an explicit successful `get_subagent_result` response with a recognized status and an unambiguous pair of semantic milestones.
 
 ## Development
 
@@ -112,7 +162,7 @@ npm install
 npm run check
 ```
 
-Tests cover stable macro reconciliation, reducer transitions, stale patches, duplicate active phases, deduplication, cycles, privacy sentinels, classifier/normalizer behavior, scheduler single-flight behavior, persistence, subagent correlation, vertical TUI layout/navigation, and executive focus behavior.
+Tests cover the 104-node/74-generic/329-revision legacy case, 500-event telemetry isolation, recursive privacy, migration, stale patches, consolidation and caps, cycles, bounded rebuild evidence, global board stability, variable detail, terminal width, and parallel branches with two checks plus final integration.
 
 ## License
 
