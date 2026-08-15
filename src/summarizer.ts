@@ -2,6 +2,7 @@ import { uuidv7, type Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { presetPrompt } from "./config.js";
 import type { EvidenceBuffer } from "./evidence.js";
+import { parseModelReference } from "./model-reference.js";
 import { publicProjection } from "./privacy.js";
 import { applyPatch, createGraph } from "./reducer.js";
 import {
@@ -115,11 +116,11 @@ export class SemanticSummarizer {
   }
 }
 
-function resolveModel(ctx: ExtensionContext, selection: OverviewConfig["model"]): Model<any> | undefined {
+export function resolveModel(ctx: ExtensionContext, selection: OverviewConfig["model"]): Model<any> | undefined {
   if (selection === "off") return undefined;
   if (selection === "inherit") return ctx.model;
-  const slash = selection.indexOf("/");
-  return ctx.modelRegistry.find(selection.slice(0, slash), selection.slice(slash + 1));
+  const reference = parseModelReference(selection);
+  return reference ? ctx.modelRegistry.find(reference.provider, reference.modelId) : undefined;
 }
 
 export function buildPrompt(graph: SemanticGraph, evidence: readonly Pick<EvidenceItem, "id" | "kind" | "text">[], config: OverviewConfig, reason: string, rebuild = false): string {

@@ -7,14 +7,24 @@ import { parseSnapshot, serializeSnapshot, restoreFromBranch, SNAPSHOT_ENTRY } f
 import { collectRebuildEvidence } from "./rebuild.js";
 import { applyPatch, reduceEvent, createGraph } from "./reducer.js";
 import { SingleFlightScheduler } from "./scheduler.js";
+import { showOverviewSettings } from "./settings.js";
 import { GraphStore } from "./store.js";
-import { SemanticSummarizer } from "./summarizer.js";
+import { resolveModel, SemanticSummarizer } from "./summarizer.js";
 import { OverviewComponent } from "./tui.js";
 import type { EventKind, NormalizedEvent, OverviewConfig, PresetName } from "./types.js";
 
 const SUBAGENT_CHANNELS = [
   "subagents:created", "subagents:started", "subagents:completed",
   "subagents:failed", "subagents:compacted", "subagents:steered",
+] as const;
+
+export const OVERVIEW_SUBCOMMANDS = [
+  { name: "settings", description: "Configure the overview and choose an exact Pi model" },
+  { name: "rules", description: "Edit session-level macro emphasis rules" },
+  { name: "update", description: "Queue a semantic milestone update" },
+  { name: "rebuild", description: "Preview and confirm a clean schema-v2 rebuild" },
+  { name: "status", description: "Show overview and resolved model status" },
+  { name: "help", description: "Show overview subcommands" },
 ] as const;
 
 export default function semanticOverview(pi: ExtensionAPI) {
@@ -155,35 +165,55 @@ export default function semanticOverview(pi: ExtensionAPI) {
   pi.registerFlag("overview-disabled", { type: "boolean", description: "Disable semantic overview", default: false });
 
   pi.registerShortcut(Key.ctrlShift("o"), { description: "Open semantic overview", handler: showOverlay });
-  pi.registerCommand("overview", { description: "Open the semantic overview overlay", handler: async (_args, ctx) => showOverlay(ctx) });
-  pi.registerCommand("overview-update", {
-    description: "Request a non-blocking semantic milestone update",
-    handler: async (_args, ctx) => { scheduler.force(); if (ctx.hasUI) ctx.ui.notify("Semantic update queued", "info"); },
-  });
-  pi.registerCommand("overview-rebuild", {
-    description: "Preview and confirm a clean schema-v2 semantic rebuild",
-    handler: async (_args, ctx) => rebuildOverview(ctx),
-  });
-  pi.registerCommand("overview-status", {
-    description: "Show semantic overview status",
-    handler: async (_args, ctx) => {
-      const graph = store.get();
-      const visible = graph.nodes.filter((node) => !node.supersededBy).length;
-      if (ctx.hasUI) ctx.ui.notify(`Overview ${config.enabled ? "enabled" : "disabled"}; ${visible} visible milestones; model ${config.model}; ${lastStatus}`, "info");
+  pi.registerCommand("overview", {
+    description: "Open or configure semantic overview (settings, rules, update, rebuild, status)",
+    getArgumentCompletions: (prefix) => {
+      if (/\s/.test(prefix)) return null;
+      const matches = OVERVIEW_SUBCOMMANDS
+        .filter((command) => command.name.startsWith(prefix.toLowerCase()))
+        .map((command) => ({ value: command.name, label: command.name, description: command.description }));
+      return matches.length > 0 ? matches : null;
+    },
+    handler: async (args, ctx) => {
+      const command = args.trim().toLowerCase();
+      if (!command) return showOverlay(ctx);
+      if (command === "settings") return configureSession(ctx);
+      if (command === "rules") return editRules(ctx);
+      if (command === "update") {
+        scheduler.force();
+        if (ctx.hasUI) ctx.ui.notify("Semantic update queued", "info");
+        return;
+      }
+      if (command === "rebuild") return rebuildOverview(ctx);
+      if (command === "status") return showStatus(ctx);
+      if (command === "help") {
+        if (ctx.hasUI) ctx.ui.notify(OVERVIEW_SUBCOMMANDS.map((item) => `/overview ${item.name} — ${item.description}`).join("\n"), "info");
+        return;
+      }
+      if (ctx.hasUI) ctx.ui.notify(`Unknown overview command "${args.trim()}". Use /overview help.`, "warning");
     },
   });
-  pi.registerCommand("overview-rules", {
-    description: "Edit session-level macro emphasis rules",
-    handler: async (_args, ctx) => {
-      if (!ctx.hasUI) return;
-      const rules = await ctx.ui.editor("Semantic overview rules", config.customRules);
-      if (rules === undefined) return;
-      sessionOverrides.customRules = rules.slice(0, 1000);
-      await reloadConfig(ctx);
-      ctx.ui.notify("Overview rules updated; hard privacy rules remain enforced", "info");
-    },
-  });
-  pi.registerCommand("overview-settings", { description: "Configure semantic overview for this session", handler: async (_args, ctx) => configureSession(ctx) });
+
+  async function editRules(ctx: ExtensionCommandContext): Promise<void> {
+    if (!ctx.hasUI) return;
+    const rules = await ctx.ui.editor("Semantic overview rules", config.customRules);
+    if (rules === undefined) return;
+    sessionOverrides.customRules = rules.slice(0, 1000);
+    await reloadConfig(ctx);
+    ctx.ui.notify("Overview rules updated; hard privacy rules remain enforced", "info");
+  }
+
+  function showStatus(ctx: ExtensionCommandContext): void {
+    const graph = store.get();
+    const visible = graph.nodes.filter((node) => !node.supersededBy).length;
+    const resolved = resolveModel(ctx, config.model);
+    const resolvedText = resolved ? `${resolved.provider}/${resolved.id}` : config.model === "off" ? "off" : "unavailable";
+    const authText = resolved ? (ctx.modelRegistry.hasConfiguredAuth(resolved) ? "authenticated" : "missing auth") : "";
+    if (ctx.hasUI) ctx.ui.notify(
+      `Overview ${config.enabled ? "enabled" : "disabled"}; ${visible} visible milestones; configured model ${config.model}; resolved model ${resolvedText}${authText ? ` (${authText})` : ""}; ${lastStatus}`,
+      "info",
+    );
+  }
 
   async function rebuildOverview(ctx: ExtensionContext): Promise<void> {
     if (!ctx.hasUI) return;
@@ -227,27 +257,23 @@ export default function semanticOverview(pi: ExtensionAPI) {
   }
 
   async function configureSession(ctx: ExtensionCommandContext): Promise<void> {
-    if (!ctx.hasUI) return;
-    const item = await ctx.ui.select("Semantic overview setting", ["Preset", "Model", "Thinking", "Update interval", "Enabled"]);
-    if (!item) return;
-    if (item === "Preset") {
-      const value = await ctx.ui.select("Preset", Object.keys(PRESETS));
-      if (value) sessionOverrides.preset = value as PresetName;
-    } else if (item === "Model") {
-      const value = await ctx.ui.input("Model", "inherit, off, or provider/model");
-      if (value) sessionOverrides.model = value as OverviewConfig["model"];
-    } else if (item === "Thinking") {
-      const value = await ctx.ui.select("Thinking", ["low", "medium", "high"]);
-      if (value) sessionOverrides.thinking = value as OverviewConfig["thinking"];
-    } else if (item === "Update interval") {
-      const value = await ctx.ui.input("Turns between updates", String(config.everyTurns));
-      if (value && /^\d+$/.test(value)) sessionOverrides.everyTurns = Number(value);
-    } else {
-      const value = await ctx.ui.select("Overview", ["enabled", "disabled"]);
-      if (value) sessionOverrides.enabled = value === "enabled";
-    }
+    const changes = await showOverviewSettings(ctx, config);
+    if (!changes) return;
+    const previousModel = config.model;
+    sessionOverrides = { ...sessionOverrides, ...changes };
+    // Fence and abort any in-flight call so a response from the previous model/provider cannot land.
+    semanticEpoch++;
+    summarizer.dispose();
+    scheduler.invalidate();
     await reloadConfig(ctx);
-    ctx.ui.notify("Semantic overview session settings updated", "info");
+    const resolved = resolveModel(ctx, config.model);
+    const resolvedText = resolved ? `${resolved.provider}/${resolved.id}` : config.model;
+    lastStatus = resolved && ctx.modelRegistry.hasConfiguredAuth(resolved)
+      ? `configured model ready (${resolvedText})`
+      : config.model === "off" ? "clean deterministic view" : `configured model unavailable (${resolvedText})`;
+    updateFooter();
+    ctx.ui.notify(`Semantic overview session settings updated · model ${config.model} → ${resolvedText}`, "info");
+    if (config.enabled && config.model !== "off" && previousModel !== config.model) scheduler.force();
   }
 
   pi.on("session_start", async (event, ctx) => {
@@ -262,9 +288,9 @@ export default function semanticOverview(pi: ExtensionAPI) {
     started = true;
     if (migratedLegacy) {
       commitGraph(restored);
-      lastStatus = restored.nodes.length === 0 ? "legacy noise removed; run /overview-rebuild" : `legacy view consolidated to ${restored.nodes.length} milestones`;
+      lastStatus = restored.nodes.length === 0 ? "legacy noise removed; run /overview rebuild" : `legacy view consolidated to ${restored.nodes.length} milestones`;
       if (ctx.hasUI) ctx.ui.notify(restored.nodes.length === 0
-        ? "Legacy overview noise was removed. Run /overview-rebuild to reconstruct useful executive milestones."
+        ? "Legacy overview noise was removed. Run /overview rebuild to reconstruct useful executive milestones."
         : `Legacy overview was consolidated to ${restored.nodes.length} concrete milestones and persisted as schema v2.`, "info");
     }
     ingest("session.started", { status: event.reason });
