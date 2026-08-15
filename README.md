@@ -18,12 +18,17 @@ Pi 0.84.2 or newer is required. Subagent support is optional and uses that packa
 
 ## Use
 
+All commands live under one `/overview` parent:
+
 - `/overview` or `Ctrl+Shift+O`: open the centered 94% × 94% overlay.
-- `/overview-update`: queue a semantic synthesis pass.
-- `/overview-rebuild`: prepare a bounded schema-v2 rebuild, show a concrete preview, and ask before replacement.
-- `/overview-settings`: change the session preset, model, thinking level, cadence, or enabled state.
-- `/overview-rules`: edit session-level emphasis preferences.
-- `/overview-status`: show mode and visible milestone count.
+- `/overview settings`: open the searchable settings panel and choose an exact model from Pi's configured model catalogue.
+- `/overview rules`: edit session-level emphasis preferences.
+- `/overview update`: queue a semantic synthesis pass.
+- `/overview rebuild`: prepare a bounded schema-v2 rebuild, show a concrete preview, and ask before replacement.
+- `/overview status`: show mode, visible milestone count, configured model, exact resolved provider/model, and auth state.
+- `/overview help`: list the child commands.
+
+Pi autocompletes the child command after `/overview `. The old hyphenated commands are no longer registered.
 
 Overlay controls:
 
@@ -34,7 +39,7 @@ Overlay controls:
 - Enter: open variable-length milestone detail; Enter or Escape returns.
 - `g`, `a`, `b`: timeline, agents, and issues views.
 - `u`: queue an incremental update.
-- `r`: close the overlay and start the full `/overview-rebuild` flow, including bounded-input consent, preview, and replacement confirmation.
+- `r`: close the overlay and start the full `/overview rebuild` flow, including bounded-input consent, preview, and replacement confirmation.
 - `q` or Escape: close.
 
 ## Executive layout
@@ -90,7 +95,7 @@ Old records are retained as superseded history where practical but do not render
 
 ## Rebuild behavior
 
-`/overview-rebuild` reads only bounded compaction/branch summaries and recent visible user/assistant text from the active branch. It excludes tool results, thinking, tool arguments, and custom private state.
+`/overview rebuild` reads only bounded compaction/branch summaries and recent visible user/assistant text from the active branch. It excludes tool results, thinking, tool arguments, and custom private state.
 
 When a configured model is available:
 
@@ -131,9 +136,11 @@ Presets: `executive`, `balanced`, `technical-macro`, `blockers`, `delegation`.
 
 Model values:
 
-- `inherit`: active Pi model
-- `provider/model`: specific configured model
+- `inherit`: follow Pi's active model (including a local model)
+- `provider/model`: use that exact configured provider and model only; model IDs may themselves contain `/`
 - `off`: no overview model calls; telemetry remains passive and the public view stays clean until validated semantic data exists
+
+`/overview settings` refreshes and uses Pi's effective model catalogue (`scopedModels` when the session is scoped, otherwise all available authenticated models). The picker is searchable and always displays the provider, so equal model IDs from providers such as `openai` and `openai-codex` cannot be confused. Changing settings aborts any in-flight overview request made with the previous model before the new exact selection is applied.
 
 CLI flags: `--overview-model`, `--overview-preset`, `--overview-disabled`.
 

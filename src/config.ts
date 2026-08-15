@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { isExactModelReference } from "./model-reference.js";
 import type { OverviewConfig, PresetName } from "./types.js";
 
 export const PRESETS: Record<PresetName, Pick<OverviewConfig, "everyTurns" | "customRules">> = {
@@ -47,7 +48,7 @@ async function readConfig(path: string): Promise<Partial<OverviewConfig>> {
 
 export function normalizeConfig(input: Partial<OverviewConfig>): OverviewConfig {
   const preset = validPreset(input.preset) ?? DEFAULT_CONFIG.preset;
-  const model = typeof input.model === "string" && (input.model === "inherit" || input.model === "off" || /^[^/\s]+\/[^/\s]+$/.test(input.model))
+  const model = typeof input.model === "string" && (input.model === "inherit" || input.model === "off" || isExactModelReference(input.model))
     ? input.model as OverviewConfig["model"] : DEFAULT_CONFIG.model;
   const thinking = input.thinking === "medium" || input.thinking === "high" ? input.thinking : "low";
   return {
