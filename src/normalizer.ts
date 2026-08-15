@@ -83,6 +83,20 @@ export class EventNormalizer {
   clear(): void { this.toolStarts.clear(); }
 }
 
+export type SubagentResultStatus = "running" | "queued" | "completed" | "steered" | "error";
+
+export function explicitSubagentResultStatus(result: unknown): SubagentResultStatus | undefined {
+  const text = extractResultText(result);
+  const match = text.match(/\bStatus:\s*(running|queued|completed|steered|error)\b/i);
+  return match ? match[1]!.toLocaleLowerCase() as SubagentResultStatus : undefined;
+}
+
+export function correlatedSubagentIdFromTool(toolName: string, args: unknown): string | undefined {
+  if (toolName.toLocaleLowerCase() !== "get_subagent_result" || !args || typeof args !== "object") return undefined;
+  const rawId = (args as Record<string, unknown>).agent_id;
+  return typeof rawId === "string" && rawId.length > 0 ? `sub:${stableToken(rawId)}` : undefined;
+}
+
 export function normalizeSubagentEvent(channel: string, raw: unknown, normalizer: EventNormalizer, now = Date.now()): NormalizedEvent | undefined {
   const map: Record<string, EventKind> = {
     "subagents:created": "subagent.created",
@@ -94,6 +108,15 @@ export function normalizeSubagentEvent(channel: string, raw: unknown, normalizer
   };
   const kind = map[channel];
   return kind ? normalizer.normalize(kind, raw, now) : undefined;
+}
+
+function extractResultText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(extractResultText).join(" ");
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  if (typeof record.text === "string") return record.text;
+  return extractResultText(record.content ?? record.result);
 }
 
 function safeToolName(name: string): string {
