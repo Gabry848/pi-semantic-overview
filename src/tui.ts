@@ -18,6 +18,7 @@ export interface OverviewComponentOptions {
   requestRender: () => void;
   onClose: () => void;
   onUpdate: () => void;
+  onRebuild: () => void;
 }
 
 export class OverviewComponent implements Component {
@@ -59,6 +60,7 @@ export class OverviewComponent implements Component {
     else if (data === "a") this.setView("agents");
     else if (data === "b") this.setView("blockers");
     else if (data === "u") this.options.onUpdate();
+    else if (data === "r") { this.options.onRebuild(); return; }
     else if (matchesKey(data, "tab")) this.nextAgent();
     else if (matchesKey(data, "enter") && this.selectedId) { this.focusedId = this.selectedId; this.focusScroll = 0; }
     else if (matchesKey(data, "ctrl+up")) this.panY = Math.max(0, this.panY - 1);
@@ -97,7 +99,7 @@ export class OverviewComponent implements Component {
     } else {
       const milestoneCount = visibleNodes(this.graph).filter((node) => node.agentId === "main").length;
       lines.push(row(` ${theme.fg("accent", theme.bold("Semantic Overview"))}  ${theme.fg("dim", `${milestoneCount} milestone principali`)}`));
-      lines.push(row(` ${theme.fg("dim", "↑/↓ timeline  ←/→ relazioni  Tab agente  Enter dettaglio  g/a/b viste  u aggiorna  q chiudi")}`));
+      lines.push(row(` ${theme.fg("dim", "↑/↓ timeline  ←/→ relazioni  Tab agente  Enter dettaglio  g/a/b viste  u aggiorna  r ricostruisci  q chiudi")}`));
       lines.push(row(""));
       if (this.view === "agents") {
         const body = this.renderAgents(inner);

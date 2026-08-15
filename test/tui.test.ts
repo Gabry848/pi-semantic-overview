@@ -66,7 +66,7 @@ function fixture() {
 }
 
 function component() {
-  return new OverviewComponent({ store: new GraphStore(fixture()), theme, requestRender: vi.fn(), onClose: vi.fn(), onUpdate: vi.fn() });
+  return new OverviewComponent({ store: new GraphStore(fixture()), theme, requestRender: vi.fn(), onClose: vi.fn(), onUpdate: vi.fn(), onRebuild: vi.fn() });
 }
 
 describe("executive overview TUI", () => {
@@ -133,7 +133,7 @@ describe("executive overview TUI", () => {
   it("renders sparse Enter detail at its natural height without blank padding", () => {
     const graph = createGraph("sparse", 0);
     graph.nodes.push({ id: "sparse", type: "decision", title: "Selected the defensible direction", agentId: "main", status: "completed", startedAt: 1 });
-    const view = new OverviewComponent({ store: new GraphStore(graph), theme, requestRender: vi.fn(), onClose: vi.fn(), onUpdate: vi.fn() });
+    const view = new OverviewComponent({ store: new GraphStore(graph), theme, requestRender: vi.fn(), onClose: vi.fn(), onUpdate: vi.fn(), onRebuild: vi.fn() });
     view.render(120);
     view.handleInput("\r");
     const rendered = view.render(120);
@@ -144,8 +144,8 @@ describe("executive overview TUI", () => {
 
   it("opens detail, returns before closing, and disposes subscriptions", () => {
     const store = new GraphStore(fixture());
-    const close = vi.fn(); const update = vi.fn();
-    const view = new OverviewComponent({ store, theme, requestRender: vi.fn(), onClose: close, onUpdate: update });
+    const close = vi.fn(); const update = vi.fn(); const rebuild = vi.fn();
+    const view = new OverviewComponent({ store, theme, requestRender: vi.fn(), onClose: close, onUpdate: update, onRebuild: rebuild });
     view.render(120);
     view.handleInput("\r");
     expect(view.isFocused).toBe(true);
@@ -153,6 +153,7 @@ describe("executive overview TUI", () => {
     view.handleInput("\u001b");
     expect(view.isFocused).toBe(false);
     view.handleInput("u"); expect(update).toHaveBeenCalledOnce();
+    view.handleInput("r"); expect(rebuild).toHaveBeenCalledOnce();
     view.handleInput("\u001b"); expect(close).toHaveBeenCalledOnce();
     expect(store.listenerCount).toBe(1);
     view.dispose();

@@ -141,6 +141,10 @@ export default function semanticOverview(pi: ExtensionAPI) {
         requestRender: () => tui.requestRender(),
         onClose: () => done(undefined),
         onUpdate: () => scheduler.force(),
+        onRebuild: () => {
+          done(undefined);
+          queueMicrotask(() => { void rebuildOverview(ctx); });
+        },
       }),
       { overlay: true, overlayOptions: { width: "94%", maxHeight: "94%", minWidth: 76, anchor: "center" } },
     );
@@ -181,9 +185,10 @@ export default function semanticOverview(pi: ExtensionAPI) {
   });
   pi.registerCommand("overview-settings", { description: "Configure semantic overview for this session", handler: async (_args, ctx) => configureSession(ctx) });
 
-  async function rebuildOverview(ctx: ExtensionCommandContext): Promise<void> {
+  async function rebuildOverview(ctx: ExtensionContext): Promise<void> {
     if (!ctx.hasUI) return;
-    await ctx.waitForIdle();
+    const waitForIdle = "waitForIdle" in ctx && typeof ctx.waitForIdle === "function" ? ctx.waitForIdle.bind(ctx) : undefined;
+    if (waitForIdle) await waitForIdle();
     const source = collectRebuildEvidence(ctx.sessionManager.getBranch());
     const maySend = summarizer.isModelAvailable();
     if (maySend) {

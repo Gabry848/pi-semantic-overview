@@ -33,7 +33,8 @@ Overlay controls:
 - Tab: move between agents.
 - Enter: open variable-length milestone detail; Enter or Escape returns.
 - `g`, `a`, `b`: timeline, agents, and issues views.
-- `u`: queue an update.
+- `u`: queue an incremental update.
+- `r`: close the overlay and start the full `/overview-rebuild` flow, including bounded-input consent, preview, and replacement confirmation.
 - `q` or Escape: close.
 
 ## Executive layout
