@@ -21,8 +21,8 @@ describe("semantic JSON contract", () => {
     ] }));
     expect(patch.operations.map((operation) => operation.op)).toEqual(["updateNode", "consolidateNodes", "checkBranch", "integrateBranch"]);
     expect(patch.operations[0]).toEqual({ op: "updateNode", id: "phase", changes: { title: "Established the intended direction", summary: ["The direction now has clear support"] } });
-    expect(() => parsePatch('{"baseRevision":0,"operations":[],"raw":"sentinel"}')).toThrow();
-    expect(() => parsePatch('{"baseRevision":0,"operations":[{"op":"deleteNode","id":"n"}]}')).toThrow();
+    expect(parsePatch('{"baseRevision":0,"operations":[],"raw":"sentinel"}')).toEqual({ baseRevision: 0, operations: [] });
+    expect(parsePatch('{"baseRevision":0,"operations":[{"op":"deleteNode","id":"n"}]}')).toEqual({ baseRevision: 0, operations: [] });
   });
 
   it("does not blindly rebase when a semantic change lands in flight", async () => {
@@ -104,5 +104,39 @@ describe("semantic JSON contract", () => {
     expect(json).not.toContain("RAW_TOOL_SENTINEL");
     expect(json).not.toContain("RAW_THINKING_SENTINEL");
     expect(evidence.reduce((total, item) => total + item.text.length, 0)).toBeLessThanOrEqual(8_000);
+  });
+
+  it("accepts fenced JSON, extra keys, and underscore ids from model output", () => {
+    const patch = parsePatch("```json\n{\"baseRevision\":0,\"operations\":[{\"op\":\"addNode\",\"comment\":\"meta\",\"node\":{\"id\":\"node_1\",\"type\":\"verification\",\"title\":\"Confirmed a meaningful delivery outcome\",\"agentId\":\"main\",\"status\":\"completed\",\"startedAt\":1,\"outcome\":\"Observable checks support the intended result\",\"description\":\"drop me\"}}],\"raw\":\"sentinel\"}\n```");
+    expect(patch.operations).toHaveLength(1);
+    expect(patch.operations[0]).toMatchObject({ op: "addNode", node: { id: "node_1", title: "Confirmed a meaningful delivery outcome" } });
+    expect(JSON.stringify(patch)).not.toContain("sentinel");
+    expect(JSON.stringify(patch)).not.toContain("drop me");
+  });
+
+  it("keeps valid rebuild nodes when one sibling operation is unsafe", async () => {
+    const evidence = new EvidenceBuffer();
+    const ctx = {
+      model: { provider: "fake", id: "small" },
+      modelRegistry: {
+        hasConfiguredAuth: () => true,
+        complete: async () => response(JSON.stringify({
+          baseRevision: 0,
+          operations: [
+            { op: "addNode", node: semanticNode("accepted") },
+            { op: "addNode", node: { ...semanticNode("unsafe"), title: "See /private/RAW_SENTINEL.ts" } },
+          ],
+        })),
+      },
+    };
+    const summarizer = new SemanticSummarizer({
+      getGraph: () => createGraph("s", 0),
+      setGraph: () => true,
+      getConfig: () => DEFAULT_CONFIG,
+      evidence,
+      getContext: () => ctx as never,
+    });
+    const preview = await summarizer.previewRebuild([], "s");
+    expect(preview?.nodes.map((node) => node.id)).toEqual(["accepted"]);
   });
 });

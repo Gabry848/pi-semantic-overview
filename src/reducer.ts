@@ -87,6 +87,23 @@ export function applyPatch(graph: SemanticGraph, patch: GraphPatch, evidence: re
   return next;
 }
 
+/** Applies each operation independently so one unsafe model node cannot discard the rest of a valid patch. */
+export function applyPatchBestEffort(graph: SemanticGraph, patch: GraphPatch, evidence: readonly EvidenceItem[] = []): { graph: SemanticGraph; applied: number; failed: number } {
+  if (!Number.isInteger(patch.baseRevision) || patch.baseRevision !== graph.semanticRevision) throw new Error("Stale semantic patch");
+  let current = graph;
+  let applied = 0;
+  let failed = 0;
+  for (const operation of patch.operations) {
+    try {
+      current = applyPatch(current, { baseRevision: current.semanticRevision, operations: [operation] }, evidence);
+      applied++;
+    } catch {
+      failed++;
+    }
+  }
+  return { graph: current, applied, failed };
+}
+
 function applyOperation(graph: SemanticGraph, operation: PatchOperation): void {
   switch (operation.op) {
     case "addNode":
@@ -394,7 +411,7 @@ function visibleMainCount(graph: SemanticGraph): number {
 }
 
 function safeId(value: unknown, max = 100): value is string {
-  return typeof value === "string" && value.length <= max && /^[-:a-zA-Z0-9]+$/.test(value) && !/(?:api[-_]?key|token|secret|password|authorization)/i.test(value);
+  return typeof value === "string" && value.length <= max && /^[-:_a-zA-Z0-9]+$/.test(value) && !/(?:api[-_]?key|token|secret|password|authorization)/i.test(value);
 }
 
 function cloneNode(node: GraphNode): GraphNode {

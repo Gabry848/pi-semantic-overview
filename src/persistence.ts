@@ -201,7 +201,7 @@ function cloneNode(node: GraphNode): GraphNode {
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function finite(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
 function safeId(value: unknown, max = 100): value is string {
-  return typeof value === "string" && value.length <= max && /^[-:a-zA-Z0-9]+$/.test(value) && !/(?:api[-_]?key|token|secret|password|authorization)/i.test(value);
+  return typeof value === "string" && value.length <= max && /^[-:_a-zA-Z0-9]+$/.test(value) && !/(?:api[-_]?key|token|secret|password|authorization)/i.test(value);
 }
 
 export const persistedTransitionIsLegal = isLegalTransition;

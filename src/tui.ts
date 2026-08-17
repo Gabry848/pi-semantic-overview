@@ -19,6 +19,7 @@ export interface OverviewComponentOptions {
   onClose: () => void;
   onUpdate: () => void;
   onRebuild: () => void;
+  getStatus?: () => string;
 }
 
 export class OverviewComponent implements Component {
@@ -110,7 +111,11 @@ export class OverviewComponent implements Component {
       const visible = this.lastLayout.fixedViewport
         ? this.lastLayout.lines.slice(0, BODY_HEIGHT)
         : this.lastLayout.lines.slice(this.panY, this.panY + BODY_HEIGHT);
-      if (!visible.length) visible.push(` ${theme.fg("muted", this.view === "graph" ? "Vista v2 pulita: nessuna milestone semantica ancora disponibile" : "Nessun elemento disponibile")}`);
+      if (!visible.length) {
+        const status = this.options.getStatus?.();
+        const detail = status && /rejected|unavailable|not persisted/.test(status) ? ` · ${status}` : "";
+        visible.push(` ${theme.fg("muted", this.view === "graph" ? `Vista v2 pulita: nessuna milestone semantica ancora disponibile${detail}` : "Nessun elemento disponibile")}`);
+      }
       for (const line of visible) lines.push(row(line));
       for (let index = visible.length; index < BODY_HEIGHT; index++) lines.push(row(""));
     }

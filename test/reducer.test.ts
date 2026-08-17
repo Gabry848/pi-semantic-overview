@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPatch, createGraph, isLegalTransition, reduceEvent } from "../src/reducer.js";
+import { applyPatch, applyPatchBestEffort, createGraph, isLegalTransition, reduceEvent } from "../src/reducer.js";
 import type { GraphNode, NormalizedEvent } from "../src/types.js";
 
 const event = (partial: Partial<NormalizedEvent> & Pick<NormalizedEvent, "id" | "kind">): NormalizedEvent => ({ timestamp: 100, agentId: "main", ...partial });
@@ -113,5 +113,20 @@ describe("schema-v2 semantic reducer", () => {
     expect(graph.edges.filter((edge) => edge.kind === "checks")).toHaveLength(2);
     expect(graph.edges.find((edge) => edge.id === "final-integration")?.strength).toBe("final");
     expect(() => applyPatch(graph, { baseRevision: graph.semanticRevision, operations: [{ op: "checkBranch", id: "false-rejoin", branchNodeId: "main-delegate", mainNodeId: "main-integrate" }] })).toThrow(/Ambiguous/);
+  });
+
+  it("keeps valid operations when a sibling model node is unsafe", () => {
+    const result = applyPatchBestEffort(createGraph("s", 0), {
+      baseRevision: 0,
+      operations: [
+        { op: "addNode", node: milestone("accepted") },
+        { op: "addNode", node: { ...milestone("unsafe"), title: "See /private/RAW_SENTINEL.ts" } },
+        { op: "addEdge", edge: { id: "dangling", from: "accepted", to: "unsafe", kind: "sequence" } },
+      ],
+    });
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(2);
+    expect(result.graph.nodes.map((node) => node.id)).toEqual(["accepted"]);
+    expect(result.graph.edges).toHaveLength(0);
   });
 });

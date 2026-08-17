@@ -155,6 +155,7 @@ export default function semanticOverview(pi: ExtensionAPI) {
           done(undefined);
           queueMicrotask(() => { void rebuildOverview(ctx); });
         },
+        getStatus: () => lastStatus,
       }),
       { overlay: true, overlayOptions: { width: "94%", maxHeight: "94%", minWidth: 76, anchor: "center" } },
     );
@@ -240,7 +241,9 @@ export default function semanticOverview(pi: ExtensionAPI) {
         ctx.ui.notify("Semantic overview rebuilt", "info");
         return;
       }
-      ctx.ui.notify("A valid private rebuild preview could not be produced", "warning");
+      ctx.ui.notify(lastStatus.includes("rejected") || lastStatus.includes("unavailable")
+        ? `A valid private rebuild preview could not be produced: ${lastStatus}`
+        : "A valid private rebuild preview could not be produced", "warning");
     }
     const clean = await ctx.ui.confirm(
       "Start a clean schema-v2 view?",

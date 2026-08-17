@@ -13,6 +13,19 @@ describe("recursive privacy boundary", () => {
     }
   });
 
+  it("does not treat ordinary executive English as code, commands, or package identifiers", () => {
+    for (const text of [
+      "Decided to return to the previous approach",
+      "Completed a private review of the intended outcome",
+      "Established the type of delivery expected next",
+      "Make the next verification pass after the review",
+      "Find the remaining acceptance concern",
+      "An end-to-end readiness review confirmed the outcome",
+    ]) {
+      expect(inspectPublicText(text)).toEqual([]);
+    }
+  });
+
   it("rejects exact six-word copies without overmatching ordinary short phrases", () => {
     expect(inspectPublicText("alpha bravo", evidence)).toHaveLength(0);
     expect(inspectPublicText("alpha bravo charlie delta echo foxtrot", evidence).map((issue) => issue.code)).toContain("verbatim");

@@ -10,7 +10,6 @@ const TRANSCRIPT_PATTERNS = [
   /\b(?:the user asked|the assistant replied|verbatim|transcript)\b/i,
 ];
 const COMMAND_PATTERNS = [
-  /(?:^|[\s:])(?:sudo\s+)?(?:cd|ls|cat|sed|awk|grep|rg|find|git|npm|pnpm|yarn|bun|bash|sh|zsh|curl|wget|rm|cp|mv|chmod|chown|python|node|make|docker|kubectl)\s+[\w@./-]+/im,
   /(?:&&|\|\||\$\(|;\s*(?:git|npm|rm|cd)\b)/i,
   /\b(?:select\s+.+\s+from|insert\s+into|update\s+\w+\s+set|delete\s+from)\b/i,
 ];
@@ -22,14 +21,24 @@ const PATH_PATTERNS = [
   /[A-Za-z]:\\[^\s]+/,
 ];
 const CODE_PATTERNS = [
-  /(?:^|\s)(?:const|let|var|function|class|interface|type|def|fn|public|private|return|import|export)\s+[A-Za-z_$][\w$]*/m,
+  /(?:^|[\s;])(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=/,
+  /(?:^|[\s;])(?:function|class|interface|enum)\s+[A-Za-z_$][\w$]*\s*[({<]/,
+  /(?:^|[\s;])(?:def|fn)\s+[A-Za-z_$][\w$]*\s*\(/,
+  /(?:^|[\s;])(?:import|export)\s+(?:\{|default|\*|type\s+\{|[A-Za-z_$][\w$]*\s+from)/,
+  /(?:^|[\s;])(?:public|private|protected)\s+(?:readonly\s+)?(?:static\s+)?[A-Za-z_$][\w$]*\s*[(:={]/,
   /[A-Za-z_$][\w$]*\s*=\s*(?:["'`{\[\d]|new\s+)/,
-  /=>|\{\s*[A-Za-z_$][\w$]*\s*:/,
+  /=>\s*[{(]|\{\s*[A-Za-z_$][\w$]*\s*:/,
 ];
-const PACKAGE_IDENTIFIER_PATTERNS = [
-  /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/,
-  /\b[a-z][a-z0-9]*(?:-[a-z0-9]+){2,}\b/,
-];
+const PACKAGE_SCOPE_PATTERN = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
+const PACKAGE_KEBAB_PATTERN = /\b[a-z][a-z0-9]*(?:-[a-z0-9]+){2,}\b/g;
+const SHELL_COMMAND_PATTERN = /(?:^|[\s:`])(?:sudo\s+)?(cd|ls|cat|sed|awk|grep|rg|find|git|npm|pnpm|yarn|bun|bash|sh|zsh|curl|wget|rm|cp|mv|chmod|chown|python|node|make|docker|kubectl)\s+(\S+)/gim;
+const ENGLISH_STOPWORDS = new Set([
+  "a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "of", "on", "or", "the", "to", "with",
+  "this", "that", "next", "last", "new", "old", "it", "its", "be", "is", "was", "are",
+]);
+const SHELL_SUBCOMMANDS = new Set([
+  "add", "build", "checkout", "ci", "clone", "commit", "diff", "exec", "install", "log", "pull", "push", "run", "start", "status", "test",
+]);
 
 export interface PrivacyIssue { code: string; message: string }
 
@@ -49,10 +58,10 @@ export function inspectPublicText(text: string, evidence: readonly EvidenceItem[
   if (!text.trim()) issues.push({ code: "empty", message: "public text is empty" });
   if (/[`]/.test(text) || CODE_PATTERNS.some((pattern) => pattern.test(text))) issues.push({ code: "code", message: "likely code" });
   if (PATH_PATTERNS.some((pattern) => pattern.test(text))) issues.push({ code: "path", message: "likely path or filename" });
-  if (COMMAND_PATTERNS.some((pattern) => pattern.test(text))) issues.push({ code: "command", message: "likely shell command" });
+  if (COMMAND_PATTERNS.some((pattern) => pattern.test(text)) || looksLikeShellCommand(text)) issues.push({ code: "command", message: "likely shell command" });
   if (SECRET_PATTERNS.some((pattern) => pattern.test(text))) issues.push({ code: "secret", message: "likely secret" });
   if (TRANSCRIPT_PATTERNS.some((pattern) => pattern.test(text))) issues.push({ code: "transcript", message: "transcript-like wording" });
-  if (PACKAGE_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))) issues.push({ code: "identifier", message: "likely package identifier" });
+  if (PACKAGE_SCOPE_PATTERN.test(text) || looksLikePackageIdentifier(text)) issues.push({ code: "identifier", message: "likely package identifier" });
 
   const candidate = sixWordWindows(text);
   if (candidate.size > 0) {
@@ -66,6 +75,30 @@ export function inspectPublicText(text: string, evidence: readonly EvidenceItem[
     }
   }
   return issues;
+}
+
+function looksLikeShellCommand(text: string): boolean {
+  SHELL_COMMAND_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SHELL_COMMAND_PATTERN.exec(text))) {
+    const argument = match[2] ?? "";
+    const head = argument.replace(/[^\w-].*$/, "").toLowerCase();
+    if (ENGLISH_STOPWORDS.has(head)) continue;
+    if (/^-/.test(argument) || /[/=*~]/.test(argument) || /\.[a-z]{1,5}$/i.test(argument) || /-/.test(argument)) return true;
+    if (SHELL_SUBCOMMANDS.has(head)) return true;
+  }
+  return false;
+}
+
+function looksLikePackageIdentifier(text: string): boolean {
+  PACKAGE_KEBAB_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PACKAGE_KEBAB_PATTERN.exec(text))) {
+    const parts = match[0]!.split("-");
+    if (parts.some((part) => ENGLISH_STOPWORDS.has(part))) continue;
+    return true;
+  }
+  return false;
 }
 
 export function isGenericTitle(title: string): boolean {

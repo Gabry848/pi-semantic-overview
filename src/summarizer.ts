@@ -4,7 +4,7 @@ import { presetPrompt } from "./config.js";
 import type { EvidenceBuffer } from "./evidence.js";
 import { parseModelReference } from "./model-reference.js";
 import { publicProjection } from "./privacy.js";
-import { applyPatch, createGraph } from "./reducer.js";
+import { applyPatchBestEffort, createGraph } from "./reducer.js";
 import {
   EDGE_KINDS, NODE_STATUSES, NODE_TYPES,
   type EvidenceItem, type GraphAgent, type GraphEdge, type GraphNode, type GraphPatch,
@@ -54,7 +54,12 @@ export class SemanticSummarizer {
       // Telemetry does not move this revision, and semantic changes are never blindly rebased.
       if (scope !== this.deps.getScope?.()) return false;
       const current = this.deps.getGraph();
-      const next = applyPatch(current, patch, evidence);
+      const result = applyPatchBestEffort(current, patch, evidence);
+      if (result.applied === 0 && result.failed > 0) {
+        this.deps.onStatus?.("semantic update rejected (no valid operations)");
+        return false;
+      }
+      const next = result.graph;
       if (next === current) {
         this.deps.evidence.consume(ids);
         this.deps.onStatus?.("semantic view already current");
@@ -85,10 +90,13 @@ export class SemanticSummarizer {
     if (!patch) return undefined;
     try {
       if (scope !== this.deps.getScope?.()) return undefined;
-      const preview = applyPatch(clean, patch, evidence);
-      const visibleMain = preview.nodes.filter((node) => node.agentId === "main" && !node.supersededBy);
-      if (visibleMain.length > 10) throw new Error("Rebuild exceeds milestone target");
-      return preview;
+      const result = applyPatchBestEffort(clean, patch, evidence);
+      const visibleMain = result.graph.nodes.filter((node) => node.agentId === "main" && !node.supersededBy);
+      if (visibleMain.length === 0 && result.failed > 0 && result.applied === 0) {
+        this.deps.onStatus?.("rebuild preview rejected (no public milestones survived validation)");
+        return undefined;
+      }
+      return result.graph;
     } catch (error) {
       this.deps.onStatus?.(`rebuild preview rejected (${safeError(error)})`);
       return undefined;
@@ -102,11 +110,24 @@ export class SemanticSummarizer {
     try {
       const response = await ctx.modelRegistry.complete(
         model,
-        { messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }] },
+        {
+          systemPrompt: "Return one JSON object with keys baseRevision and operations. No markdown and no prose.",
+          messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
+        },
         { reasoningEffort: this.deps.getConfig().thinking, cacheRetention: "none", sessionId: uuidv7(), signal: controller.signal } as never,
       );
+      if (response.stopReason === "error" || response.stopReason === "aborted") {
+        this.deps.onStatus?.(`semantic synthesis unavailable (${safeError(response.errorMessage || response.stopReason)})`);
+        return undefined;
+      }
       const text = response.content.filter((block): block is { type: "text"; text: string } => block.type === "text").map((block) => block.text).join("\n");
-      return parsePatch(text);
+      const thinking = response.content.filter((block): block is { type: "thinking"; thinking: string } => block.type === "thinking").map((block) => block.thinking).join("\n");
+      try {
+        return parsePatch(text);
+      } catch (error) {
+        if (!thinking) throw error;
+        return parsePatch(thinking);
+      }
     } catch (error) {
       this.deps.onStatus?.(`semantic synthesis unavailable (${safeError(error)})`);
       return undefined;
@@ -166,13 +187,15 @@ export function buildPrompt(graph: SemanticGraph, evidence: readonly Pick<Eviden
 }
 
 export function extractJsonObject(text: string): string {
-  const start = text.indexOf("{");
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const source = fenced?.[1]?.trim() ? fenced[1] : text;
+  const start = source.indexOf("{");
   if (start < 0) throw new Error("No JSON object");
   let depth = 0;
   let inString = false;
   let escaped = false;
-  for (let index = start; index < text.length; index++) {
-    const char = text[index]!;
+  for (let index = start; index < source.length; index++) {
+    const char = source[index]!;
     if (inString) {
       if (escaped) escaped = false;
       else if (char === "\\") escaped = true;
@@ -181,28 +204,32 @@ export function extractJsonObject(text: string): string {
     }
     if (char === '"') inString = true;
     else if (char === "{") depth++;
-    else if (char === "}" && --depth === 0) return text.slice(start, index + 1);
+    else if (char === "}" && --depth === 0) return source.slice(start, index + 1).replace(/,\s*([}\]])/g, "$1");
   }
   throw new Error("Incomplete JSON object");
 }
 
 export function parsePatch(text: string): GraphPatch {
   const value: unknown = JSON.parse(extractJsonObject(text));
-  if (!isRecord(value) || !exactKeys(value, ["baseRevision", "operations"]) || !Number.isInteger(value.baseRevision) || !Array.isArray(value.operations)) throw new Error("Invalid patch envelope");
-  return { baseRevision: value.baseRevision as number, operations: value.operations.map(parseOperation) };
+  if (!isRecord(value) || !Number.isInteger(value.baseRevision) || !Array.isArray(value.operations)) throw new Error("Invalid patch envelope");
+  const operations: PatchOperation[] = [];
+  for (const item of value.operations) {
+    try { operations.push(parseOperation(item)); } catch { /* Drop unknown or malformed operations; never persist extra keys. */ }
+  }
+  return { baseRevision: value.baseRevision as number, operations };
 }
 
 function parseOperation(value: unknown): PatchOperation {
   if (!isRecord(value) || typeof value.op !== "string") throw new Error("Invalid operation");
-  if (value.op === "addNode" && exactKeys(value, ["op", "node"])) return { op: "addNode", node: parseNode(value.node) };
-  if (value.op === "updateNode" && exactKeys(value, ["op", "id", "changes"]) && safeId(value.id)) return { op: "updateNode", id: value.id, changes: parseChanges(value.changes) };
-  if (value.op === "addEdge" && exactKeys(value, ["op", "edge"])) return { op: "addEdge", edge: parseEdge(value.edge) };
-  if (value.op === "upsertAgent" && exactKeys(value, ["op", "agent"])) return { op: "upsertAgent", agent: parseAgent(value.agent) };
-  if (value.op === "consolidateNodes" && subsetExact(value, ["op", "ids", "node"], ["edges"]) && Array.isArray(value.ids) && value.ids.every(safeId)) {
+  if (value.op === "addNode" && "node" in value) return { op: "addNode", node: parseNode(value.node) };
+  if (value.op === "updateNode" && safeId(value.id) && "changes" in value) return { op: "updateNode", id: value.id, changes: parseChanges(value.changes) };
+  if (value.op === "addEdge" && "edge" in value) return { op: "addEdge", edge: parseEdge(value.edge) };
+  if (value.op === "upsertAgent" && "agent" in value) return { op: "upsertAgent", agent: parseAgent(value.agent) };
+  if (value.op === "consolidateNodes" && Array.isArray(value.ids) && value.ids.every(safeId) && "node" in value) {
     return { op: "consolidateNodes", ids: value.ids, node: parseNode(value.node), ...(Array.isArray(value.edges) ? { edges: value.edges.map(parseEdge) } : {}) };
   }
-  if (value.op === "supersedeNodes" && exactKeys(value, ["op", "ids", "by"]) && Array.isArray(value.ids) && value.ids.every(safeId) && safeId(value.by)) return { op: "supersedeNodes", ids: value.ids, by: value.by };
-  if ((value.op === "checkBranch" || value.op === "integrateBranch") && subsetExact(value, ["op", "id", "branchNodeId", "mainNodeId"], ["note"]) && safeId(value.id) && safeId(value.branchNodeId) && safeId(value.mainNodeId) && (value.note === undefined || typeof value.note === "string")) {
+  if (value.op === "supersedeNodes" && Array.isArray(value.ids) && value.ids.every(safeId) && safeId(value.by)) return { op: "supersedeNodes", ids: value.ids, by: value.by };
+  if ((value.op === "checkBranch" || value.op === "integrateBranch") && safeId(value.id) && safeId(value.branchNodeId) && safeId(value.mainNodeId) && (value.note === undefined || typeof value.note === "string")) {
     return { op: value.op, id: value.id, branchNodeId: value.branchNodeId, mainNodeId: value.mainNodeId, ...(typeof value.note === "string" ? { note: value.note } : {}) };
   }
   throw new Error("Unknown operation shape");
@@ -212,14 +239,15 @@ const NODE_KEYS = ["id", "type", "title", "agentId", "status", "startedAt", "end
 const CONTENT_KEYS = ["type", "title", "status", "startedAt", "endedAt", "impact", "objective", "mandate", "summary", "outcome", "rationale", "macroSteps", "evidenceClaims", "currentWork", "concern", "nextStep", "contribution", "revision"];
 
 function parseNode(value: unknown): GraphNode {
-  if (!isRecord(value) || !subsetKeys(value, NODE_KEYS) || !safeId(value.id) || !safeId(value.agentId) || !isNodeType(value.type) || typeof value.title !== "string" || !isNodeStatus(value.status)) throw new Error("Invalid node shape");
-  const fields = parseContent(value);
-  return { id: value.id, agentId: value.agentId, type: value.type, title: value.title, status: value.status, startedAt: fields.startedAt ?? Date.now(), ...fields };
+  const node = isRecord(value) ? pick(value, NODE_KEYS) : undefined;
+  if (!node || !safeId(node.id) || !safeId(node.agentId) || !isNodeType(node.type) || typeof node.title !== "string" || !isNodeStatus(node.status)) throw new Error("Invalid node shape");
+  const fields = parseContent(node);
+  return { id: node.id, agentId: node.agentId, type: node.type, title: node.title, status: node.status, startedAt: fields.startedAt ?? Date.now(), ...fields };
 }
 
 function parseChanges(value: unknown): NodeChanges {
-  if (!isRecord(value) || !subsetKeys(value, CONTENT_KEYS)) throw new Error("Invalid changes");
-  return parseContent(value);
+  if (!isRecord(value)) throw new Error("Invalid changes");
+  return parseContent(pick(value, CONTENT_KEYS));
 }
 
 function parseContent(value: Record<string, unknown>): NodeChanges {
@@ -232,7 +260,13 @@ function parseContent(value: Record<string, unknown>): NodeChanges {
   }
   if (value.summary !== undefined) { if (!stringArray(value.summary)) throw new Error("Invalid summary"); output.summary = value.summary; }
   if (value.evidenceClaims !== undefined) { if (!stringArray(value.evidenceClaims)) throw new Error("Invalid evidence claims"); output.evidenceClaims = value.evidenceClaims; }
-  if (value.macroSteps !== undefined) { if (!Array.isArray(value.macroSteps)) throw new Error("Invalid macro steps"); output.macroSteps = value.macroSteps.map(parseStep); }
+  if (value.macroSteps !== undefined) {
+    if (!Array.isArray(value.macroSteps)) throw new Error("Invalid macro steps");
+    const steps = value.macroSteps.flatMap((step) => {
+      try { return [parseStep(step)]; } catch { return []; }
+    });
+    if (steps.length) output.macroSteps = steps;
+  }
   if (value.startedAt !== undefined) { if (!finite(value.startedAt)) throw new Error("Invalid startedAt"); output.startedAt = value.startedAt; }
   if (value.endedAt !== undefined) { if (!finite(value.endedAt)) throw new Error("Invalid endedAt"); output.endedAt = value.endedAt; }
   if (value.impact !== undefined) { if (!isImpact(value.impact)) throw new Error("Invalid impact"); output.impact = value.impact; }
@@ -241,32 +275,40 @@ function parseContent(value: Record<string, unknown>): NodeChanges {
 }
 
 function parseStep(value: unknown): MacroStep {
-  if (!isRecord(value) || !subsetExact(value, ["action"], ["result"]) || typeof value.action !== "string" || (value.result !== undefined && typeof value.result !== "string")) throw new Error("Invalid macro step");
-  return { action: value.action, ...(typeof value.result === "string" ? { result: value.result } : {}) };
+  const step = isRecord(value) ? pick(value, ["action", "result"]) : undefined;
+  if (!step || typeof step.action !== "string" || (step.result !== undefined && typeof step.result !== "string")) throw new Error("Invalid macro step");
+  return { action: step.action, ...(typeof step.result === "string" ? { result: step.result } : {}) };
 }
 
 function parseEdge(value: unknown): GraphEdge {
-  if (!isRecord(value) || !subsetExact(value, ["id", "from", "to", "kind"], ["strength", "note"]) || !safeId(value.id) || !safeId(value.from) || !safeId(value.to) || typeof value.kind !== "string" || !EDGE_KINDS.includes(value.kind as never)) throw new Error("Invalid edge shape");
-  if (value.strength !== undefined && value.strength !== "intermediate" && value.strength !== "final") throw new Error("Invalid edge strength");
-  if (value.note !== undefined && typeof value.note !== "string") throw new Error("Invalid edge note");
-  return { id: value.id, from: value.from, to: value.to, kind: value.kind as GraphEdge["kind"], ...(value.strength ? { strength: value.strength } : {}), ...(typeof value.note === "string" ? { note: value.note } : {}) };
+  const edge = isRecord(value) ? pick(value, ["id", "from", "to", "kind", "strength", "note"]) : undefined;
+  if (!edge || !safeId(edge.id) || !safeId(edge.from) || !safeId(edge.to) || typeof edge.kind !== "string" || !EDGE_KINDS.includes(edge.kind as never)) throw new Error("Invalid edge shape");
+  if (edge.strength !== undefined && edge.strength !== "intermediate" && edge.strength !== "final") throw new Error("Invalid edge strength");
+  if (edge.note !== undefined && typeof edge.note !== "string") throw new Error("Invalid edge note");
+  return { id: edge.id, from: edge.from, to: edge.to, kind: edge.kind as GraphEdge["kind"], ...(edge.strength ? { strength: edge.strength } : {}), ...(typeof edge.note === "string" ? { note: edge.note } : {}) };
 }
 
 function parseAgent(value: unknown): GraphAgent {
-  if (!isRecord(value) || !subsetExact(value, ["id", "label", "status"], ["parentId", "startedAt", "endedAt", "mandate"]) || !safeId(value.id) || typeof value.label !== "string" || typeof value.status !== "string" || !["idle", "running", "completed", "failed"].includes(value.status)) throw new Error("Invalid agent shape");
-  if (value.parentId !== undefined && !safeId(value.parentId)) throw new Error("Invalid parent");
-  if (value.startedAt !== undefined && !finite(value.startedAt)) throw new Error("Invalid startedAt");
-  if (value.endedAt !== undefined && !finite(value.endedAt)) throw new Error("Invalid endedAt");
-  if (value.mandate !== undefined && typeof value.mandate !== "string") throw new Error("Invalid mandate");
-  return { id: value.id, label: value.label, status: value.status as GraphAgent["status"], ...(typeof value.parentId === "string" ? { parentId: value.parentId } : {}), ...(typeof value.startedAt === "number" ? { startedAt: value.startedAt } : {}), ...(typeof value.endedAt === "number" ? { endedAt: value.endedAt } : {}), ...(typeof value.mandate === "string" ? { mandate: value.mandate } : {}) };
+  const agent = isRecord(value) ? pick(value, ["id", "label", "status", "parentId", "startedAt", "endedAt", "mandate"]) : undefined;
+  if (!agent || !safeId(agent.id) || typeof agent.label !== "string" || typeof agent.status !== "string" || !["idle", "running", "completed", "failed"].includes(agent.status)) throw new Error("Invalid agent shape");
+  if (agent.parentId !== undefined && !safeId(agent.parentId)) throw new Error("Invalid parent");
+  if (agent.startedAt !== undefined && !finite(agent.startedAt)) throw new Error("Invalid startedAt");
+  if (agent.endedAt !== undefined && !finite(agent.endedAt)) throw new Error("Invalid endedAt");
+  if (agent.mandate !== undefined && typeof agent.mandate !== "string") throw new Error("Invalid mandate");
+  return { id: agent.id, label: agent.label, status: agent.status as GraphAgent["status"], ...(typeof agent.parentId === "string" ? { parentId: agent.parentId } : {}), ...(typeof agent.startedAt === "number" ? { startedAt: agent.startedAt } : {}), ...(typeof agent.endedAt === "number" ? { endedAt: agent.endedAt } : {}), ...(typeof agent.mandate === "string" ? { mandate: agent.mandate } : {}) };
 }
 
-function safeError(error: unknown): string { return error instanceof Error ? error.message.replace(/[^a-zA-Z0-9 ;:()-]/g, "").slice(0, 80) : "unknown response"; }
+function safeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "unknown response";
+  return message.replace(/[^a-zA-Z0-9 ;:()-]/g, "").slice(0, 80);
+}
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).length === keys.length && keys.every((key) => key in value); }
-function subsetKeys(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).every((key) => keys.includes(key)); }
-function subsetExact(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): boolean { return required.every((key) => key in value) && Object.keys(value).every((key) => required.includes(key) || optional.includes(key)); }
-function safeId(value: unknown): value is string { return typeof value === "string" && /^[-:a-zA-Z0-9]{1,100}$/.test(value); }
+function pick(value: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const key of keys) if (key in value) output[key] = value[key];
+  return output;
+}
+function safeId(value: unknown): value is string { return typeof value === "string" && /^[-:_a-zA-Z0-9]{1,100}$/.test(value); }
 function finite(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
 function stringArray(value: unknown): value is string[] { return Array.isArray(value) && value.every((item) => typeof item === "string"); }
 function isNodeType(value: unknown): value is GraphNode["type"] { return typeof value === "string" && NODE_TYPES.includes(value as never); }
